@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEON BREAKOUT</title>
+    <style>
+        :root {
+            --bg-color: #050505;
+            --neon-blue: #00f3ff;
+            --neon-pink: #ff00ff;
+            --neon-green: #00ff41;
+            --neon-yellow: #ffe600;
+            --text-color: #ffffff;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 50px rgba(0, 243, 255, 0.2);
+            border: 2px solid #333;
+        }
+
+        canvas {
+            display: block;
+            background-color: #0a0a0a;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .hud {
+            display: flex;
+            justify-content: space-between;
+            padding: 15px 20px;
+            font-size: 18px;
+            text-shadow: 0 0 5px var(--neon-blue);
+            font-weight: bold;
+        }
+
+        .hud span {
+            margin: 0 10px;
+        }
+
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            pointer-events: auto;
+            text-align: center;
+            z-index: 10;
+        }
+
+        h1 {
+            font-size: 48px;
+            margin: 0 0 20px 0;
+            color: var(--neon-pink);
+            text-shadow: 0 0 20px var(--neon-pink), 2px 2px 0px var(--neon-blue);
+            letter-spacing: 4px;
+        }
+
+        p {
+            font-size: 18px;
+            color: #ccc;
+            margin-bottom: 30px;
+        }
+
+        button {
+            background: transparent;
+            color: var(--neon-green);
+            border: 2px solid var(--neon-green);
+            padding: 15px 40px;
+            font-size: 20px;
+            cursor: pointer;
+            text-transform: uppercase;
+            font-weight: bold;
+            box-shadow: 0 0 10px var(--neon-green);
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: var(--neon-green);
+            color: #000;
+            box-shadow: 0 0 30px var(--neon-green);
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .controls-hint {
+            margin-top: 20px;
+            font-size: 14px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    
+    <div id="ui-layer">
+        <div class="hud">
+            <span id="scoreDisplay">Punkte: 0</span>
+            <span id="levelDisplay">Level: 1</span>
+            <span id="livesDisplay">Leben: 3</span>
+        </div>
+        <div class="hud" style="justify-content: flex-end; padding-right: 20px;">
+            <span id="highscoreDisplay" style="color: var(--neon-yellow);">Highscore: 0</span>
+        </div>
+    </div>
+
+    <div id="overlay">
+        <h1>NEON BREAKOUT</h1>
+        <p id="statusText">Bereit zum Spielen?</p>
+        <button id="startBtn">Spiel Starten</button>
+        <div class="controls-hint">
+            Steuerung: Maus oder Pfeiltasten | Laser: Leertaste
+        </div>
+    </div>
+</div>
+
+<script>
+/**
+ * NEON BREAKOUT - Single File Implementation
+ * Features: Physics, Levels, PowerUps, Particles, Neon Visuals
+ */
+
+// --- Konfiguration & Konstanten ---
+const CONFIG = {
+    canvasWidth: 800,
+    canvasHeight: 600,
+    paddleWidth: 100,
+    paddleHeight: 15,
+    paddleSpeed: 8,
+    ballRadius: 8,
+    ballSpeedBase: 5,
+    ballSpeedMax: 12,
+    brickRows: 5,
+    brickCols: 9,
+    brickPadding: 10,
+    brickOffsetTop: 60,
+    brickOffsetLeft: 35,
+    colors: {
+        normal: '#00f3ff', // Cyan
+        hard: '#ff00ff',   // Magenta
+        gold: '#ffe600',   // Yellow
+        paddle: '#00ff41', // Green
+        ball: '#ffffff'
+    },
+    powerUpChance: 0.15, // 15% Chance pro Stein
+    powerUpDuration: 10000 // ms
+};
+
+// --- Level Designs ---
+// 0: Leer, 1: Normal, 2: Hart, 3: Gold
+const LEVELS = [
+    [
+        [1,1,1,1,1,1,1,1,1],
+        [1,2,2,2,2,2,2,2,1],
+        [2,2,3,3,3,3,3,2,2],
+        [2,3,3,3,3,3,3,3,2],
+        [1,1,1,1,1,1,1,1,1]
+    ],
+    [
+        [0,1,0,1,0,1,0,1,0],
+        [1,2,1,2,1,2,1,2,1],
+        [0,2,0,3,0,3,0,2,0],
+        [1,2,1,3,1,3,1,2,1],
+        [0,1,0,1,0,1,0,1,0]
+    ],
+    [
+        [3,3,3,3,3,3,3,3,3],
+        [2,2,2,2,2,2,2,2,2],
+        [1,1,1,1,1,1,1,1,1],
+        [1,1,1,1,1,1,1,1,1],
+        [2,2,2,2,2,2,2,2,2]
+    ]
+];
+
+// --- Klassen ---
+
+class Particle {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        const angle = Math.random() * Math.PI * 2;
+        const speed = Math.random() * 3 + 1;
+        this.vx = Math.cos(angle) * speed;
+        this.vy = Math.sin(angle) * speed;
+        this.life = 1.0;
+        this.decay = Math.random() * 0.03 + 0.02;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= this.decay;
+    }
+
+    draw(ctx) {
+        ctx.globalAlpha = this.life;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+    }
+}
+
+class PowerUp {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.width = 20;
+        this.height = 20;
+        this.type = type; // 'extraBall', 'bigPaddle', 'laser'
+        this.vy = 2;
+        this.active = true;
+        this.color = '#ffffff';
+        
+        if (type === 'extraBall') this.color = '#00f3ff';
+        if (type === 'bigPaddle') this.color = '#00ff41';
+        if (type === 'laser') this.color = '#ff00ff';
+    }
+
+    update() {
+        this.y += this.vy;
+    }
+
+    draw(ctx) {
+        if (!this.active) return;
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = this.color;
+        ctx.fillStyle = this.color;
+        ctx.fillRect(this.x, this.y, this.width, this.height);
+        
+        // Text Label
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#000';
+        ctx.font = '10px Arial';
+        ctx.textAlign = 'center';
+        let label = '';
+        if (this.type === 'extraBall') label = 'B';
+        if (this.type === 'bigPaddle') label = 'P';
+        if (this.type === 'laser') label = 'L';
+        ctx.fillText(label, this.x + 10, this.y + 14);
+    }
+}
+
+class Laser {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 4;
+        this.height = 15;
+        this.vy = -10;
+        this.active = true;
+    }
+
+    update() {
+        this.y += this.vy;
+        if (this.y < 0) this.active = false;
+    }
+
+    draw(ctx) {
+        if (!this.active) return;
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = '#ff00ff';
+        ctx.fillStyle = '#ff00ff';
+        ctx.fillRect(this.x, this.y, this.width, this.height);
+    }
+}
+
+class Game {
+    constructor() {
+        this.canvas = document.getElementById('gameCanvas');
+        this.ctx = this.canvas.getContext('2d');
+        
+        // UI Elements
+        this.scoreEl = document.getElementById('scoreDisplay');
+        this.levelEl = document.getElementById('levelDisplay');
+        this.livesEl = document.getElementById('livesDisplay');
+        this.highscoreEl = document.getElementById('highscoreDisplay');
+        this.overlay = document.getElementById('overlay');
+        this.startBtn = document.getElementById('startBtn');
+        this.statusText = document.getElementById('statusText');
+
+        // State
+        this.score = 0;
+        this.lives = 3;
+        this.levelIndex = 0;
+        this.highscore = parseInt(localStorage.getItem('neonBreakoutHighscore')) || 0;
+        this.isRunning = false;
+        this.animationId = null;
+        
+        // Entities
+        this.paddle = { x: 0, y: 0, width: CONFIG.paddleWidth, height: CONFIG.paddleHeight, dx: 0, isBig: false };
+        this.balls = [];
+        this.bricks = [];
+        this.particles = [];
+        this.powerUps = [];
+        this.lasers = [];
+        
+        // PowerUp State
+        this.laserActive = false;
+        this.laserTimer = 0;
+        this.bigPaddleTimer = 0;
+
+        // Input
+        this.keys = {};
+        this.mouseX = 0;
+        this.useMouse = false;
+
+        this.initInput();
+        this.updateHighscoreUI();
+        this.startBtn.addEventListener('click', () => this.startGame());
+    }
+
+    initInput() {
+        window.addEventListener('keydown', e => {
+            this.keys[e.code] = true;
+            if (e.code === 'Space' && this.isRunning && this.laserActive) {
+                this.shootLaser();
+            }
+        });
+        window.addEventListener('keyup', e => this.keys[e.code] = false);
+        
+        this.canvas.addEventListener('mousemove', e => {
+            const rect = this.canvas.getBoundingClientRect();
+            this.mouseX = e.clientX - rect.left;
+            this.useMouse = true;
+        });
+    }
+
+    startGame() {
+        this.score = 0;
+        this.lives = 3;
+        this.levelIndex = 0;
+        this.resetLevel();
+        this.isRunning = true;
+        this.overlay.classList.add('hidden');
+        this.updateUI();
+        this.loop();
+    }
+
+    resetLevel() {
+        this.balls = [];
+        this.powerUps = [];
+        this.lasers = [];
+        this.laserActive = false;
+        this.bigPaddleTimer = 0;
+        this.paddle.isBig = false;
+        this.paddle.width = CONFIG.paddleWidth;
+        
+        // Reset Paddle Position
+        this.paddle.x = (CONFIG.canvasWidth - this.paddle.width) / 2;
+        this.paddle.y = CONFIG.canvasHeight - 40;
+
+        // Spawn Ball
+        this.spawnBall();
+
+        // Load Bricks
+        this.bricks = [];
+        const layout = LEVELS[this.levelIndex % LEVELS.length];
+        const brickWidth = (CONFIG.canvasWidth - 2 * CONFIG.brickOffsetLeft - (CONFIG.brickCols - 1) * CONFIG.brickPadding) / CONFIG.brickCols;
+        const brickHeight = 20;
+
+        for (let r = 0; r < layout.length; r++) {
+            for (let c = 0; c < layout[r].length; c++) {
+                const type = layout[r][c];
+                if (type > 0) {
+                    this.bricks.push({
+                        x: CONFIG.brickOffsetLeft + c * (brickWidth + CONFIG.brickPadding),
+                        y: CONFIG.brickOffsetTop + r * (brickHeight + CONFIG.brickPadding),
+                        w: brickWidth,
+                        h: brickHeight,
+                        type: type, // 1: Normal, 2: Hard, 3: Gold
+                        hp: type === 2 ? 2 : 1,
+                        active: true
+                    });
+                }
+            }
+        }
+    }
+
+    spawnBall() {
+        this.balls.push({
+            x: this.paddle.x + this.paddle.width / 2,
+            y: this.paddle.y - CONFIG.ballRadius,
+            dx: CONFIG.ballSpeedBase * (Math.random() > 0.5 ? 1 : -1),
+            dy: -CONFIG.ballSpeedBase,
+            speed: CONFIG.ballSpeedBase
+        });
+    }
+
+    shootLaser() {
+        this.lasers.push(new Laser(this.paddle.x + this.paddle.width / 2 - 2, this.paddle.y));
+    }
+
+    update() {
+        if (!this.isRunning) return;
+
+        // Paddle Movement
+        if (this.useMouse) {
+            this.paddle.x = this.mouseX - this.paddle.width / 2;
+        } else {
+            if (this.keys['ArrowRight']) this.paddle.x += CONFIG.paddleSpeed;
+            if (this.keys['ArrowLeft']) this.paddle.x -= CONFIG.paddleSpeed;
+        }
+        // Clamp Paddle
+        this.paddle.x = Math.max(0, Math.min(CONFIG.canvasWidth - this.paddle.width, this.paddle.x));
+
+        // PowerUp Timers
+        if (this.laserActive) {
+            this.laserTimer--;
+            if (this.laserTimer <= 0) this.laserActive = false;
+        }
+        if (this.bigPaddleTimer > 0) {
+            this.bigPaddleTimer--;
+            if (this.bigPaddleTimer <= 0) {
+                this.paddle.isBig = false;
+                this.paddle.width = CONFIG.paddleWidth;
+            }
+        }
+
+        // Update Balls
+        for (let i = this.balls.length - 1; i >= 0; i--) {
+            let b = this.balls[i];
+            b.x += b.dx;
+            b.y += b.dy;
+
+            // Wall Collisions
+            if (b.x + b.dx > CONFIG.canvasWidth - CONFIG.ballRadius || b.x + b.dx < CONFIG.ballRadius) {
+                b.dx = -b.dx;
+            }
+            if (b.y + b.dy < CONFIG.ballRadius) {
+                b.dy = -b.dy;
+            }
+            
+            // Floor Collision (Loss)
+            if (b.y + b.dy > CONFIG.canvasHeight - CONFIG.ballRadius) {
+                this.balls.splice(i, 1);
+                if (this.balls.length === 0) {
+                    this.lives--;
+                    this.updateUI();
+                    if (this.lives <= 0) {
+                        this.gameOver();
+                    } else {
+                        this.spawnBall();
+                    }
+                }
+                continue;
+            }
+
+            // Paddle Collision
+            if (b.y + CONFIG.ballRadius >= this.paddle.y && 
+                b.y - CONFIG.ballRadius <= this.paddle.y + this.paddle.height &&
+                b.x >= this.paddle.x && 
+                b.x <= this.paddle.x + this.paddle.width) {
+                
+                // Arcade Physics: Angle based on hit position
+                let hitPoint = b.x - (this.paddle.x + this.paddle.width / 2);
+                hitPoint = hitPoint / (this.paddle.width / 2); // -1 to 1
+                
+                let angle = hitPoint * (Math.PI / 3); // Max 60 degrees
+                
+                // Ensure speed increases slightly
+                let currentSpeed = Math.min(b.speed * 1.02, CONFIG.ballSpeedMax);
+                b.speed = currentSpeed;
+
+                b.dx = currentSpeed * Math.sin(angle);
+                b.dy = -currentSpeed * Math.cos(angle);
+                
+                // Prevent sticking
+                b.y = this.paddle.y - CONFIG.ballRadius - 1;
+            }
+
+            // Brick Collision
+            let brickHit = false;
+            for (let j = 0; j < this.bricks.length; j++) {
+                let br = this.bricks[j];
+                if (!br.active) continue;
+
+                if (b.x > br.x && b.x < br.x + br.w && b.y > br.y && b.y < br.y + br.h) {
+                    b.dy = -b.dy;
+                    brickHit = true;
+                    this.handleBrickHit(br, b.x, b.y);
+                    break; // Only hit one brick per frame per ball
+                }
+            }
+        }
+
+        // Update Lasers
+        for (let i = this.lasers.length - 1; i >= 0; i--) {
+            let l = this.lasers[i];
+            l.update();
+            if (!l.active) {
+                this.lasers.splice(i, 1);
+                continue;
+            }
+            // Laser Brick Collision
+            for (let j = 0; j < this.bricks.length; j++) {
+                let br = this.bricks[j];
+                if (!br.active) continue;
+                if (l.x > br.x && l.x < br.x + br.w && l.y > br.y && l.y < br.y + br.h) {
+                    l.active = false;
+                    this.handleBrickHit(br, l.x, l.y);
+                    break;
+                }
+            }
+        }
+
+        // Update PowerUps
+        for (let i = this.powerUps.length - 1; i >= 0; i--) {
+            let p = this.powerUps[i];
+            p.update();
+            
+            // Collision with Paddle
+            if (p.y + p.height >= this.paddle.y && 
+                p.y <= this.paddle.y + this.paddle.height &&
+                p.x + p.width >= this.paddle.x && 
+                p.x <= this.paddle.x + this.paddle.width) {
+                
+                this.activatePowerUp(p.type);
+                this.powerUps.splice(i, 1);
+                continue;
+            }
+
+            if (p.y > CONFIG.canvasHeight) {
+                this.powerUps.splice(i, 1);
+            }
+        }
+
+        // Update Particles
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            this.particles[i].update();
+            if (this.particles[i].life <= 0) {
+                this.particles.splice(i, 1);
+            }
+        }
+
+        // Check Level Clear
+        if (this.bricks.every(b => !b.active)) {
+            this.levelIndex++;
+            this.resetLevel();
+            this.updateUI();
+        }
+    }
+
+    handleBrickHit(brick, x, y) {
+        // Create Particles
+        for (let k = 0; k < 8; k++) {
+            this.particles.push(new Particle(x, y, this.getBrickColor(brick.type)));
+        }
+
+        if (brick.type === 3) {
+            // Gold: Unbreakable, just bounce (handled by physics), no score
+            return;
+        }
+
+        brick.hp--;
+        if (brick.hp <= 0) {
+            brick.active = false;
+            this.score += (brick.type === 2 ? 20 : 10);
+            
+            // PowerUp Drop
+            if (Math.random() < CONFIG.powerUpChance) {
+                const types = ['extraBall', 'bigPaddle', 'laser'];
+                const type = types[Math.floor(Math.random() * types.length)];
+                this.powerUps.push(new PowerUp(brick.x + brick.w/2, brick.y, type));
+            }
+        } else {
+            // Hard brick hit but not destroyed
+            this.score += 5;
+        }
+        this.updateUI();
+    }
+
+    activatePowerUp(type) {
+        if (type === 'extraBall') {
+            this.spawnBall();
+        } else if (type === 'bigPaddle') {
+            this.paddle.isBig = true;
+            this.paddle.width = CONFIG.paddleWidth * 1.5;
+            this.bigPaddleTimer = CONFIG.powerUpDuration / 16; // frames
+        } else if (type === 'laser') {
+            this.laserActive = true;
+            this.laserTimer = CONFIG.powerUpDuration / 16;
+        }
+    }
+
+    getBrickColor(type) {
+        if (type === 1) return CONFIG.colors.normal;
+        if (type === 2) return CONFIG.colors.hard;
+        if (type === 3) return CONFIG.colors.gold;
+        return '#fff';
+    }
+
+    draw() {
+        // Clear
+        this.ctx.fillStyle = '#050505';
+        this.ctx.fillRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
+
+        // Draw Background Grid (Animated)
+        this.drawGrid();
+
+        // Draw Bricks
+        this.bricks.forEach(br => {
+            if (!br.active) return;
+            let color = this.getBrickColor(br.type);
+            if (br.type === 2 && br.hp === 1) color = '#aa00aa'; // Dimmed hard brick
+
+            this.ctx.shadowBlur = 15;
+            this.ctx.shadowColor = color;
+            this.ctx.fillStyle = color;
+            this.ctx.fillRect(br.x, br.y, br.w, br.h);
+            
+            // Inner detail
+            this.ctx.shadowBlur = 0;
+            this.ctx.fillStyle = 'rgba(255,255,255,0.3)';
+            this.ctx.fillRect(br.x + 2, br.y + 2, br.w - 4, br.h - 4);
+        });
+
+        // Draw Paddle
+        this.ctx.shadowBlur = 20;
+        this.ctx.shadowColor = CONFIG.colors.paddle;
+        this.ctx.fillStyle = CONFIG.colors.paddle;
+        this.ctx.fillRect(this.paddle.x, this.paddle.y, this.paddle.width, this.paddle.height);
+
+        // Draw Balls
+        this.ctx.shadowBlur = 10;
+        this.ctx.shadowColor = CONFIG.colors.ball;
+        this.ctx.fillStyle = CONFIG.colors.ball;
+        this.balls.forEach(b => {
+            this.ctx.beginPath();
+            this.ctx.arc(b.x, b.y, CONFIG.ballRadius, 0, Math.PI * 2);
+            this.ctx.fill();
+        });
+
+        // Draw PowerUps
+        this.powerUps.forEach(p => p.draw(this.ctx));
+
+        // Draw Lasers
+        this.lasers.forEach(l => l.draw(this.ctx));
+
+        // Draw Particles
+        this.particles.forEach(p => p.draw(this.ctx));
+    }
+
+    drawGrid() {
+        this.ctx.strokeStyle = 'rgba(0, 243, 255, 0.1)';
+        this.ctx.lineWidth = 1;
+        const time = Date.now() / 1000;
+        const offset = (time * 20) % 50;
+
+        // Vertical lines
+        for (let x = 0; x < CONFIG.canvasWidth; x += 50) {
+            this.ctx.beginPath();
+            this.ctx.moveTo(x, 0);
+            this.ctx.lineTo(x, CONFIG.canvasHeight);
+            this.ctx.stroke();
+        }
+
+        // Horizontal moving lines
+        for (let y = offset; y < CONFIG.canvasHeight; y += 50) {
+            this.ctx.beginPath();
+            this.ctx.moveTo(0, y);
+            this.ctx.lineTo(CONFIG.canvasWidth, y);
+            this.ctx.stroke();
+        }
+    }
+
+    updateUI() {
+        this.scoreEl.innerText = `Punkte: ${this.score}`;
+        this.levelEl.innerText = `Level: ${this.levelIndex + 1}`;
+        this.livesEl.innerText = `Leben: ${this.lives}`;
+    }
+
+    updateHighscoreUI() {
+        this.highscoreEl.innerText = `Highscore: ${this.highscore}`;
+    }
+
+    gameOver() {
+        this.isRunning = false;
+        if (this.score > this.highscore) {
+            this.highscore = this.score;
+            localStorage.setItem('neonBreakoutHighscore', this.highscore);
+            this.statusText.innerText = `NEUER HIGHSCORE! Punkte: ${this.score}`;
+        } else {
+            this.statusText.innerText = `Spiel Vorbei. Punkte: ${this.score}`;
+        }
+        this.updateHighscoreUI();
+        this.startBtn.innerText = "Nochmal Spielen";
+        this.overlay.classList.remove('hidden');
+    }
+
+    loop() {
+        if (!this.isRunning) return;
+        this.update();
+        this.draw();
+        this.animationId = requestAnimationFrame(() => this.loop());
+    }
+}
+
+// Start Game Instance
+window.onload = () => {
+    const game = new Game();
+};
+
+</script>
+</body>
+</html>
