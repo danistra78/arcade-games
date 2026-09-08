@@ -351,6 +351,8 @@ class Game {
     initInput() {
         window.addEventListener('keydown', e => {
             this.keys[e.code] = true;
+            // Tastatur-Eingabe hebt Maus-Modus auf (beide Steuerungen bleiben nutzbar)
+            if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') this.useMouse = false;
             if (e.code === 'Space' && this.isRunning && this.laserActive) {
                 this.shootLaser();
             }
@@ -571,8 +573,8 @@ class Game {
             }
         }
 
-        // Check Level Clear
-        if (this.bricks.every(b => !b.active)) {
+        // Check Level Clear (Gold-Steine sind unzerstörbar und zählen nicht)
+        if (this.bricks.filter(b => b.type !== 3).every(b => !b.active)) {
             this.levelIndex++;
             this.resetLevel();
             this.updateUI();
