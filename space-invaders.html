@@ -399,8 +399,10 @@
                         }
                     });
                 }
-                bunkers.forEach(bnk => bnk.checkCollision(b));
+                bunkers.forEach(bnk => { if (b.active) bnk.checkCollision(b); });
             });
+            // Tote Aliens entfernen, damit das Array pro Level nicht wächst
+            aliens = aliens.filter(a => a.alive);
         }
 
         function playerHit() {
