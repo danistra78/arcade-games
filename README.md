@@ -11,8 +11,8 @@ Alle funktionierenden Spiele sind live geschaltet und können direkt ohne Instal
 
 Falls du den Code lieber lokal ausführen möchtest:
 1. Lade dir dieses Repository als ZIP-Datei herunter oder klone es via Git.
-2. Öffne den Ordner des jeweiligen Spiels.
-3. Öffne die `index.html` direkt in einem beliebigen Webbrowser.
+2. Öffne die `index.html` im Hauptverzeichnis des Repos (die Übersicht verlinkt alle Spiele relativ).
+3. Alternativ: Öffne die jeweilige Spieldatei (z. B. `tetris.html`) direkt in einem beliebigen Webbrowser.
 
 ---
 *Hinweis: Dies ist ein Experiment, um zu sehen, wie gut moderne KI-Modelle spielbaren und fehlerfreien Code für Retro-Games schreiben können.*
