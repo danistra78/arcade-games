@@ -705,7 +705,7 @@
             update(time = 0) {
                 if (!this.gameStarted || this.paused || this.gameOver) return;
                 
-                const deltaTime = time - this.lastTime;
+                const deltaTime = Math.max(0, Math.min(time - this.lastTime, 100));
                 this.lastTime = time;
                 
                 this.dropCounter += deltaTime;
@@ -739,7 +739,7 @@
                 
                 this.hideOverlay();
                 this.lastTime = performance.now();
-                this.update();
+                this.animationId = requestAnimationFrame(this.update.bind(this));
             }
 
             togglePause() {
@@ -754,7 +754,7 @@
                 } else {
                     this.hideOverlay();
                     this.lastTime = performance.now();
-                    this.update();
+                    this.animationId = requestAnimationFrame(this.update.bind(this));
                 }
             }
 
@@ -787,8 +787,8 @@
                             break;
                         case 'ArrowDown':
                             if (!this.paused) {
-                                this.drop();
-                                this.score += 1;
+                                // Soft-Drop gibt nur einen Punkt, wenn der Stein tatsächlich fällt
+                                if (this.drop()) this.score += 1;
                             }
                             break;
                         case 'ArrowUp':
