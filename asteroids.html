@@ -474,6 +474,11 @@ function update() {
 
     // FIX: Saubere Filter-Routine für tote Asteroiden
     asteroids = asteroids.filter(a => !a.dead);
+
+    // Neue Welle, wenn alle Asteroiden zerstört sind
+    if (asteroids.length === 0) {
+        createAsteroids();
+    }
 }
 
 function draw() {
@@ -527,12 +532,14 @@ function gameOver() {
 // --- Event Listeners ---
 
 window.addEventListener('keydown', e => {
-    if (keys.hasOwnProperty(e.key)) keys[e.key] = true;
+    const key = e.key === ' ' ? ' ' : e.key.toLowerCase();
+    if (keys.hasOwnProperty(key)) keys[key] = true;
     if (e.key === " " && gameRunning) keys[" "] = true;
 });
 
 window.addEventListener('keyup', e => {
-    if (keys.hasOwnProperty(e.key)) keys[e.key] = false;
+    const key = e.key === ' ' ? ' ' : e.key.toLowerCase();
+    if (keys.hasOwnProperty(key)) keys[key] = false;
 });
 
 startBtn.addEventListener('click', startGame);
