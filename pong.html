@@ -8,14 +8,14 @@
         body {
             margin: 0;
             padding: 0;
-            background-color: #050505;
+            background-color: var(--t-bg, #050505);
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             height: 100vh;
             overflow: hidden;
-            color: white;
+            color: var(--t-text, white);
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
 
@@ -25,8 +25,8 @@
         }
 
         canvas {
-            border: 4px solid #333;
-            background-color: #000;
+            border: 4px solid var(--t-border, #333);
+            background-color: var(--t-bg, #000);
             display: block;
         }
 
@@ -37,9 +37,15 @@
             text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
         }
 
-        .player-score { color: #00ffff; text-shadow: 0 0 15px #00ffff; }
-        .ai-score { color: #ff00ff; text-shadow: 0 0 15px #ff00ff; }
-        
+        .player-score { color: var(--t-primary, #00ffff); text-shadow: 0 0 15px var(--t-primary, #00ffff); }
+        .ai-score { color: var(--t-secondary, #ff00ff); text-shadow: 0 0 15px var(--t-secondary, #ff00ff); }
+
+        .highscore-hint {
+            color: var(--t-accent, #ffe600);
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+
         .controls-hint {
             margin-top: 15px;
             color: #666;
@@ -48,6 +54,8 @@
     </style>
 </head>
 <body>
+
+    <div class="highscore-hint">Highscore: <span id="highscore">0</span></div>
 
     <div id="score-board">
         <span id="p1-score" class="player-score">0</span>
@@ -61,30 +69,49 @@
 
     <div class="controls-hint">Steuerung: Pfeiltasten Hoch / Runter</div>
 
+    <script src="shared/game-core.js"></script>
+    <script src="shared/theme.js"></script>
     <script>
         const canvas = document.getElementById("pongCanvas");
         const ctx = canvas.getContext("2d");
         const p1ScoreDisplay = document.getElementById("p1-score");
         const aiScoreDisplay = document.getElementById("ai-score");
+        const highscoreDisplay = document.getElementById("highscore");
 
         canvas.width = 800;
         canvas.height = 500;
 
+        const HIGHSCORE_KEY = "pong_highscore";
+        let highscore = GameCore.loadHighscore(HIGHSCORE_KEY);
+        highscoreDisplay.innerText = highscore;
+
         const PADDLE_WIDTH = 12;
         const PADDLE_HEIGHT = 80;
         const BALL_SIZE = 8;
-        const INITIAL_BALL_SPEED = 5;
-        const MAX_BALL_SPEED = 18; // Cap verhindert Tunneln durch die Paddles
-        const SPEED_INCREMENT = 1.1; 
-        const AI_ERROR_FACTOR = 0.08; 
-        const PLAYER_SPEED = 8; // Geschwindigkeit des Paddels
+        const INITIAL_BALL_SPEED = 300; // px/s
+        const MAX_BALL_SPEED = 1080; // px/s - Cap verhindert Tunneln durch die Paddles
+        const SPEED_INCREMENT = 1.1;
+        const AI_ERROR_FACTOR = 0.08; // Lerp-Faktor bei 60fps, wird dt-skaliert angewendet
+        const PLAYER_SPEED = 480; // px/s
+
+        let COLORS = {};
+        function applyTheme(palette) {
+            COLORS = {
+                bg: palette.bg,
+                net: palette.border,
+                player: palette.primary,
+                ai: palette.secondary,
+                ball: palette.text
+            };
+        }
+        applyTheme(Theme.current());
+        Theme.onThemeChange(applyTheme);
 
         const player = {
             x: 10,
             y: canvas.height / 2 - PADDLE_HEIGHT / 2,
             width: PADDLE_WIDTH,
             height: PADDLE_HEIGHT,
-            color: "#00ffff",
             score: 0
         };
 
@@ -93,7 +120,6 @@
             y: canvas.height / 2 - PADDLE_HEIGHT / 2,
             width: PADDLE_WIDTH,
             height: PADDLE_HEIGHT,
-            color: "#ff00ff",
             score: 0
         };
 
@@ -103,9 +129,10 @@
             radius: BALL_SIZE,
             speed: INITIAL_BALL_SPEED,
             dx: INITIAL_BALL_SPEED,
-            dy: INITIAL_BALL_SPEED,
-            color: "#ffffff"
+            dy: INITIAL_BALL_SPEED
         };
+
+        let particles = [];
 
         // Keyboard Input Handling
         const keys = {
@@ -129,9 +156,9 @@
             ball.dy = (Math.random() > 0.5 ? 1 : -1) * INITIAL_BALL_SPEED;
         }
 
-        function drawRect(x, y, w, h, color, shadowColor) {
+        function drawRect(x, y, w, h, color) {
             ctx.shadowBlur = 20;
-            ctx.shadowColor = shadowColor || color;
+            ctx.shadowColor = color;
             ctx.fillStyle = color;
             ctx.fillRect(x, y, w, h);
             ctx.shadowBlur = 0;
@@ -147,27 +174,36 @@
             ctx.shadowBlur = 0;
         }
 
-        function update() {
+        function registerHighscore() {
+            const best = Math.max(player.score, ai.score);
+            if (best > highscore) {
+                highscore = GameCore.saveHighscore(HIGHSCORE_KEY, best);
+                highscoreDisplay.innerText = highscore;
+            }
+        }
+
+        function update(dt) {
             // Player Movement (Pfeiltasten)
             if (keys.ArrowUp && player.y > 0) {
-                player.y -= PLAYER_SPEED;
+                player.y -= PLAYER_SPEED * dt;
             }
             if (keys.ArrowDown && player.y < canvas.height - player.height) {
-                player.y += PLAYER_SPEED;
+                player.y += PLAYER_SPEED * dt;
             }
 
             // Ball Movement
-            ball.x += ball.dx;
-            ball.y += ball.dy;
+            ball.x += ball.dx * dt;
+            ball.y += ball.dy * dt;
 
             // Wall Collision
             if (ball.y + ball.radius > canvas.height || ball.y - ball.radius < 0) {
                 ball.dy *= -1;
             }
 
-            // AI Movement (Error Factor)
+            // AI Movement (Error Factor, dt-skaliert)
             const aiTargetY = ball.y - ai.height / 2;
-            ai.y += (aiTargetY - ai.y) * AI_ERROR_FACTOR;
+            const aiFactor = Math.min(1, AI_ERROR_FACTOR * 60 * dt);
+            ai.y += (aiTargetY - ai.y) * aiFactor;
 
             // Paddle Collision
             let paddle = (ball.x < canvas.width / 2) ? player : ai;
@@ -175,7 +211,7 @@
             if (detectCollision(ball, paddle)) {
                 ball.dx *= -1;
                 ball.speed = Math.min(ball.speed * SPEED_INCREMENT, MAX_BALL_SPEED);
-                
+
                 const angle = Math.atan2(ball.dy, ball.dx);
                 ball.dx = Math.cos(angle) * ball.speed;
                 ball.dy = Math.sin(angle) * ball.speed;
@@ -185,32 +221,40 @@
                 } else {
                     ball.x = ai.x - ball.radius;
                 }
+
+                GameCore.spawnParticles(particles, ball.x, ball.y, COLORS[paddle === player ? 'player' : 'ai'], 10, { speed: 200, life: 0.4 });
             }
 
             // Scoring
             if (ball.x - ball.radius < 0) {
                 ai.score++;
                 aiScoreDisplay.innerText = ai.score;
+                GameCore.spawnParticles(particles, 0, ball.y, COLORS.ai, 18, { speed: 260, life: 0.6 });
+                registerHighscore();
                 resetBall();
             } else if (ball.x + ball.radius > canvas.width) {
                 player.score++;
                 p1ScoreDisplay.innerText = player.score;
+                GameCore.spawnParticles(particles, canvas.width, ball.y, COLORS.player, 18, { speed: 260, life: 0.6 });
+                registerHighscore();
                 resetBall();
             }
+
+            GameCore.updateParticles(particles, dt);
         }
 
         function detectCollision(b, p) {
-            return b.x + b.radius > p.x && 
-                   b.x - b.radius < p.x + p.width && 
-                   b.y + b.radius > p.y && 
+            return b.x + b.radius > p.x &&
+                   b.x - b.radius < p.x + p.width &&
+                   b.y + b.radius > p.y &&
                    b.y - b.radius < p.y + p.height;
         }
 
         function render() {
-            ctx.fillStyle = "#000";
+            ctx.fillStyle = COLORS.bg;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            ctx.strokeStyle = "#222";
+            ctx.strokeStyle = COLORS.net;
             ctx.setLineDash([10, 10]);
             ctx.beginPath();
             ctx.moveTo(canvas.width / 2, 0);
@@ -218,18 +262,16 @@
             ctx.stroke();
             ctx.setLineDash([]);
 
-            drawRect(player.x, player.y, player.width, player.height, player.color, "#00ffff");
-            drawRect(ai.x, ai.y, ai.width, ai.height, ai.color, "#ff00ff");
-            drawBall(ball.x, ball.y, ball.radius, ball.color);
+            drawRect(player.x, player.y, player.width, player.height, COLORS.player);
+            drawRect(ai.x, ai.y, ai.width, ai.height, COLORS.ai);
+            drawBall(ball.x, ball.y, ball.radius, COLORS.ball);
+            GameCore.drawParticles(ctx, particles);
         }
 
-        function gameLoop() {
-            update();
+        GameCore.startLoop((dt) => {
+            update(dt);
             render();
-            requestAnimationFrame(gameLoop);
-        }
-
-        gameLoop();
+        });
     </script>
 </body>
 </html>

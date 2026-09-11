@@ -8,8 +8,8 @@
         body {
             margin: 0;
             padding: 0;
-            background-color: #050505;
-            color: #fff;
+            background-color: var(--t-bg, #050505);
+            color: var(--t-text, #fff);
             font-family: 'Courier New', Courier, monospace;
             overflow: hidden;
             display: flex;
@@ -21,12 +21,12 @@
         #game-container {
             position: relative;
             box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
-            border: 2px solid #333;
+            border: 2px solid var(--t-border, #333);
         }
 
         canvas {
             display: block;
-            background-color: #000;
+            background-color: var(--t-bg, #000);
         }
 
         #ui-layer {
@@ -57,8 +57,8 @@
             text-align: center;
             background: rgba(0, 0, 0, 0.85);
             padding: 40px;
-            border: 2px solid #0ff;
-            box-shadow: 0 0 15px #0ff;
+            border: 2px solid var(--t-primary, #0ff);
+            box-shadow: 0 0 15px var(--t-primary, #0ff);
             pointer-events: auto;
             display: flex;
             flex-direction: column;
@@ -67,27 +67,27 @@
         }
 
         h1 {
-            color: #0ff;
-            text-shadow: 0 0 10px #0ff;
+            color: var(--t-primary, #0ff);
+            text-shadow: 0 0 10px var(--t-primary, #0ff);
             margin: 0;
             font-size: 32px;
         }
 
         button {
             background: transparent;
-            color: #0ff;
-            border: 2px solid #0ff;
+            color: var(--t-primary, #0ff);
+            border: 2px solid var(--t-primary, #0ff);
             padding: 10px 20px;
             font-family: inherit;
             font-size: 18px;
             cursor: pointer;
             transition: all 0.3s;
-            text-shadow: 0 0 5px #0ff;
-            box-shadow: 0 0 5px #0ff;
+            text-shadow: 0 0 5px var(--t-primary, #0ff);
+            box-shadow: 0 0 5px var(--t-primary, #0ff);
         }
 
         button:hover {
-            background: #0ff;
+            background: var(--t-primary, #0ff);
             color: #000;
         }
 
@@ -117,6 +117,8 @@
         </div>
     </div>
 
+    <script src="shared/game-core.js"></script>
+    <script src="shared/theme.js"></script>
     <script>
         const CANVAS_WIDTH = 800;
         const CANVAS_HEIGHT = 600;
@@ -135,14 +137,27 @@
             bulletPlayer: '#ff0000',
             bulletAlien: '#ffff00',
             bunker: '#aa00ff',
-            star: '#ffffff'
+            star: '#ffffff',
+            bg: '#000'
         };
+
+        function applyTheme(palette) {
+            COLORS.player = palette.primary;
+            COLORS.alien = palette.good;
+            COLORS.bulletPlayer = palette.warn;
+            COLORS.bulletAlien = palette.accent;
+            COLORS.bunker = palette.secondary;
+            COLORS.bg = palette.bg;
+        }
+        applyTheme(Theme.current());
+
+        let particles = [];
 
         const state = {
             score: 0,
             level: 1,
             lives: 3,
-            highscore: parseInt(localStorage.getItem('neonInvadersHighscore')) || 0,
+            highscore: GameCore.loadHighscore('neonInvadersHighscore'),
             isRunning: false,
             lastTime: 0,
             keys: {},
@@ -305,9 +320,11 @@
         let alienMoveInterval = 0.5;
         let alienShootTimer = 0;
 
+        let loopController = null;
+
         function initGame() {
             player = new Player();
-            aliens = []; bullets = []; bunkers = []; stars = [];
+            aliens = []; bullets = []; bunkers = []; stars = []; particles = [];
             state.score = 0; state.level = 1; state.lives = 3; state.gameOver = false; state.isRunning = true;
             updateUI();
             startScreen.classList.add('hidden');
@@ -318,8 +335,13 @@
                 bunkers.push(new Bunker(bunkerSpacing * (i + 1) - BUNKER_WIDTH / 2, CANVAS_HEIGHT - 120));
             }
             createAlienGrid();
-            state.lastTime = performance.now();
-            requestAnimationFrame(gameLoop);
+            if (loopController) loopController.stop();
+            loopController = GameCore.startLoop((dt) => {
+                if (!state.isRunning) return;
+                update(dt);
+                draw();
+                if (state.gameOver) loopController.stop();
+            });
         }
 
         function createAlienGrid() {
@@ -335,16 +357,6 @@
         window.addEventListener('keyup', e => state.keys[e.key] = false);
         document.getElementById('startBtn').addEventListener('click', initGame);
         document.getElementById('restartBtn').addEventListener('click', initGame);
-
-        function gameLoop(timestamp) {
-            if (!state.isRunning) return;
-            const dt = (timestamp - state.lastTime) / 1000;
-            state.lastTime = timestamp;
-            if (dt > 0.1) { requestAnimationFrame(gameLoop); return; }
-            update(dt);
-            draw();
-            if (!state.gameOver) requestAnimationFrame(gameLoop);
-        }
 
         function update(dt) {
             stars.forEach(s => s.update(dt));
@@ -380,6 +392,7 @@
             checkCollisions();
             bunkers.forEach(b => b.update());
             bullets = bullets.filter(b => b.active);
+            GameCore.updateParticles(particles, dt);
             updateUI();
         }
 
@@ -396,6 +409,7 @@
                         if (a.alive && b.x < a.x + a.width && b.x + b.width > a.x &&
                             b.y < a.y + a.height && b.y + b.height > a.y) {
                             a.alive = false; b.active = false; state.score += 100;
+                            GameCore.spawnParticles(particles, a.x + a.width / 2, a.y + a.height / 2, COLORS.alien, 10, { speed: 140, life: 0.5 });
                         }
                     });
                 }
@@ -407,6 +421,7 @@
 
         function playerHit() {
             state.lives--;
+            GameCore.spawnParticles(particles, player.x + player.width / 2, player.y + player.height / 2, COLORS.player, 16, { speed: 180, life: 0.6 });
             if (state.lives <= 0) triggerGameOver();
             else bullets = [];
         }
@@ -414,20 +429,20 @@
         function triggerGameOver() {
             state.gameOver = true; state.isRunning = false;
             if (state.score > state.highscore) {
-                state.highscore = state.score;
-                localStorage.setItem('neonInvadersHighscore', state.highscore);
+                state.highscore = GameCore.saveHighscore('neonInvadersHighscore', state.score);
             }
             finalScoreEl.innerText = state.score;
             gameOverScreen.classList.remove('hidden');
         }
 
         function draw() {
-            ctx.fillStyle = '#000'; ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            ctx.fillStyle = COLORS.bg; ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
             stars.forEach(s => s.draw());
             bunkers.forEach(b => b.draw());
-            player.draw();
+            if (player) player.draw();
             aliens.forEach(a => a.draw());
             bullets.forEach(b => b.draw());
+            GameCore.drawParticles(ctx, particles);
         }
 
         function updateUI() {
@@ -437,6 +452,11 @@
             highscoreEl.innerText = state.highscore;
         }
         highscoreEl.innerText = state.highscore;
+
+        Theme.onThemeChange((palette) => {
+            applyTheme(palette);
+            if (!state.isRunning) draw();
+        });
     </script>
 </body>
 </html>

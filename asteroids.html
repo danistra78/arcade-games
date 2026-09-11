@@ -8,10 +8,10 @@
         body {
             margin: 0;
             padding: 0;
-            background-color: #000;
+            background-color: var(--t-bg, #000);
             overflow: hidden;
             font-family: 'Courier New', Courier, monospace;
-            color: #fff;
+            color: var(--t-text, #fff);
             display: flex;
             justify-content: center;
             align-items: center;
@@ -21,12 +21,12 @@
         #game-container {
             position: relative;
             box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
-            border: 2px solid #333;
+            border: 2px solid var(--t-border, #333);
         }
 
         canvas {
             display: block;
-            background-color: #000;
+            background-color: var(--t-bg, #000);
         }
 
         #ui-layer {
@@ -40,13 +40,13 @@
             box-sizing: border-box;
             display: flex;
             justify-content: space-between;
-            text-shadow: 0 0 5px #0ff;
+            text-shadow: 0 0 5px var(--t-primary, #0ff);
         }
 
         .hud-text {
             font-size: 20px;
             font-weight: bold;
-            color: #0ff;
+            color: var(--t-primary, #0ff);
         }
 
         #start-screen, #game-over-screen {
@@ -57,8 +57,8 @@
             text-align: center;
             background: rgba(0, 0, 0, 0.85);
             padding: 40px;
-            border: 2px solid #0ff;
-            box-shadow: 0 0 15px #0ff;
+            border: 2px solid var(--t-primary, #0ff);
+            box-shadow: 0 0 15px var(--t-primary, #0ff);
             pointer-events: auto;
             display: flex;
             flex-direction: column;
@@ -68,8 +68,8 @@
         h1 {
             margin: 0;
             font-size: 48px;
-            color: #0ff;
-            text-shadow: 0 0 10px #0ff;
+            color: var(--t-primary, #0ff);
+            text-shadow: 0 0 10px var(--t-primary, #0ff);
             letter-spacing: 5px;
         }
 
@@ -80,21 +80,21 @@
 
         button {
             background: transparent;
-            border: 2px solid #0ff;
-            color: #0ff;
+            border: 2px solid var(--t-primary, #0ff);
+            color: var(--t-primary, #0ff);
             padding: 10px 30px;
             font-size: 20px;
             font-family: inherit;
             cursor: pointer;
             transition: all 0.3s;
             text-transform: uppercase;
-            box-shadow: 0 0 5px #0ff;
+            box-shadow: 0 0 5px var(--t-primary, #0ff);
         }
 
         button:hover {
-            background: #0ff;
+            background: var(--t-primary, #0ff);
             color: #000;
-            box-shadow: 0 0 20px #0ff;
+            box-shadow: 0 0 20px var(--t-primary, #0ff);
         }
 
         .hidden {
@@ -127,29 +127,42 @@
     </div>
 </div>
 
+<script src="shared/game-core.js"></script>
+<script src="shared/theme.js"></script>
 <script>
 /**
  * ASTEROIDS GAME ENGINE
  * Single File Implementation - CORRECTED VERSION
  */
 
-// --- Konfiguration ---
+// --- Konfiguration (Bewegungswerte in Einheiten pro Sekunde) ---
 const CONFIG = {
-    FPS: 60,
-    FRICTION: 0.99,
+    FRICTION: 0.99, // Faktor pro Frame @60fps, wird dt-korrekt per Math.pow skaliert
     SHIP_SIZE: 20,
-    SHIP_THRUST: 0.15,
-    SHIP_ROTATION: 0.07,
-    LASER_SPEED: 7,
+    SHIP_THRUST: 9, // px/s^2
+    SHIP_ROTATION: 4.2, // rad/s
+    LASER_SPEED: 420, // px/s
     LASER_MAX: 10,
     LASER_DIST: 0.6,
+    LASER_LIFE: 1.0, // Sekunden
     ASTEROID_NUM: 3,
     ASTEROID_SIZE: 100,
-    ASTEROID_SPEED: 2,
+    ASTEROID_SPEED: 120, // px/s
     ASTEROID_JAG: 0.4,
+    SHIP_INVULN_TIME: 2.0, // Sekunden
     TEXT_COLOR: '#0ff',
+    ACCENT_COLOR: '#ff0',
+    THRUST_COLOR: '#f00',
     BG_COLOR: '#000'
 };
+
+function applyTheme(palette) {
+    CONFIG.TEXT_COLOR = palette.primary;
+    CONFIG.ACCENT_COLOR = palette.accent;
+    CONFIG.THRUST_COLOR = palette.warn;
+    CONFIG.BG_COLOR = palette.bg;
+}
+applyTheme(Theme.current());
 
 // --- Globale Variablen ---
 const canvas = document.getElementById('gameCanvas');
@@ -166,8 +179,14 @@ const restartBtn = document.getElementById('restart-btn');
 let gameRunning = false;
 let score = 0;
 let lives = 3;
-let highscore = localStorage.getItem('asteroids_highscore') || 0;
+let highscore = GameCore.loadHighscore('asteroids_highscore');
 highscoreEl.innerText = highscore;
+let particles = [];
+
+Theme.onThemeChange((palette) => {
+    applyTheme(palette);
+    if (!gameRunning) draw();
+});
 
 // Input State
 const keys = {
@@ -198,9 +217,9 @@ class Entity {
         this.dead = false;
     }
 
-    update() {
-        this.x += this.vx;
-        this.y += this.vy;
+    update(dt) {
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
 
         // Screen Wrap
         if (this.x < 0 - this.radius) this.x = canvas.width + this.radius;
@@ -218,12 +237,12 @@ class Star extends Entity {
             0, 0,
             Math.random() * 2 + 0.5
         );
-        this.speed = Math.random() * 0.5 + 0.1;
+        this.speed = Math.random() * 30 + 6; // px/s
         this.alpha = Math.random() * 0.5 + 0.3;
     }
 
-    update() {
-        this.x -= this.speed;
+    update(dt) {
+        this.x -= this.speed * dt;
         if (this.x < 0) this.x = canvas.width;
     }
 
@@ -241,35 +260,36 @@ class Ship extends Entity {
         this.angle = -Math.PI / 2;
         this.rotationSpeed = CONFIG.SHIP_ROTATION;
         this.thrusting = false;
-        this.invulnerable = 120;
+        this.invulnerable = CONFIG.SHIP_INVULN_TIME;
         this.blinkTimer = 0;
     }
 
-    update() {
-        if (keys.ArrowLeft || keys.a) this.angle -= this.rotationSpeed;
-        if (keys.ArrowRight || keys.d) this.angle += this.rotationSpeed;
+    update(dt) {
+        if (keys.ArrowLeft || keys.a) this.angle -= this.rotationSpeed * dt;
+        if (keys.ArrowRight || keys.d) this.angle += this.rotationSpeed * dt;
 
         if (keys.ArrowUp || keys.w) {
             this.thrusting = true;
-            this.vx += Math.cos(this.angle) * CONFIG.SHIP_THRUST;
-            this.vy += Math.sin(this.angle) * CONFIG.SHIP_THRUST;
+            this.vx += Math.cos(this.angle) * CONFIG.SHIP_THRUST * dt;
+            this.vy += Math.sin(this.angle) * CONFIG.SHIP_THRUST * dt;
         } else {
             this.thrusting = false;
         }
 
-        this.vx *= CONFIG.FRICTION;
-        this.vy *= CONFIG.FRICTION;
+        const frictionFactor = Math.pow(CONFIG.FRICTION, dt * 60);
+        this.vx *= frictionFactor;
+        this.vy *= frictionFactor;
 
         if (this.invulnerable > 0) {
-            this.invulnerable--;
-            this.blinkTimer++;
+            this.invulnerable -= dt;
+            this.blinkTimer += dt;
         }
 
-        super.update();
+        super.update(dt);
     }
 
     draw() {
-        if (this.invulnerable > 0 && Math.floor(this.blinkTimer / 5) % 2 === 0) return;
+        if (this.invulnerable > 0 && Math.floor(this.blinkTimer / 0.0833) % 2 === 0) return;
 
         ctx.save();
         ctx.translate(this.x, this.y);
@@ -295,8 +315,8 @@ class Ship extends Entity {
             ctx.beginPath();
             ctx.moveTo(-this.radius * 0.5, 0);
             ctx.lineTo(-this.radius * 1.5, 0);
-            ctx.strokeStyle = '#f00';
-            ctx.shadowColor = '#f00';
+            ctx.strokeStyle = CONFIG.THRUST_COLOR;
+            ctx.shadowColor = CONFIG.THRUST_COLOR;
             ctx.stroke();
         }
 
@@ -366,12 +386,12 @@ class Asteroid extends Entity {
 class Bullet extends Entity {
     constructor(x, y, vx, vy) {
         super(x, y, vx, vy, 2);
-        this.life = 60;
+        this.life = CONFIG.LASER_LIFE;
     }
 
-    update() {
-        super.update();
-        this.life--;
+    update(dt) {
+        super.update(dt);
+        this.life -= dt;
         if (this.life <= 0) this.dead = true;
     }
 
@@ -379,8 +399,8 @@ class Bullet extends Entity {
         ctx.save();
         ctx.translate(this.x, this.y);
         ctx.shadowBlur = 5;
-        ctx.shadowColor = '#ff0';
-        ctx.strokeStyle = '#ff0';
+        ctx.shadowColor = CONFIG.ACCENT_COLOR;
+        ctx.strokeStyle = CONFIG.ACCENT_COLOR;
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
@@ -419,6 +439,7 @@ function checkCollisions() {
                 b.dead = true;
                 a.dead = true; // FIX: Asteroid wird jetzt als tot markiert
                 a.split();
+                GameCore.spawnParticles(particles, a.x, a.y, CONFIG.TEXT_COLOR, 12, { speed: 180, life: 0.5 });
                 score += 100;
                 scoreEl.innerText = score;
                 break;
@@ -433,6 +454,7 @@ function checkCollisions() {
             if (distBetweenPoints(ship.x, ship.y, a.x, a.y) < a.radius + ship.radius) {
                 lives--;
                 livesEl.innerText = lives;
+                GameCore.spawnParticles(particles, ship.x, ship.y, CONFIG.THRUST_COLOR, 20, { speed: 220, life: 0.6 });
                 if (lives <= 0) {
                     gameOver();
                 } else {
@@ -440,7 +462,7 @@ function checkCollisions() {
                     ship.y = canvas.height / 2;
                     ship.vx = 0;
                     ship.vy = 0;
-                    ship.invulnerable = 120;
+                    ship.invulnerable = CONFIG.SHIP_INVULN_TIME;
                 }
                 break;
             }
@@ -448,29 +470,30 @@ function checkCollisions() {
     }
 }
 
-function update() {
+function update(dt) {
     if (!gameRunning) return;
 
     // Hintergrund Sterne
-    stars.forEach(star => star.update());
+    stars.forEach(star => star.update(dt));
 
     // Schiff
-    ship.update();
+    ship.update(dt);
     if (keys[" "]) {
         ship.shoot();
         keys[" "] = false;
     }
 
     // Asteroiden
-    asteroids.forEach(asteroid => asteroid.update());
+    asteroids.forEach(asteroid => asteroid.update(dt));
 
     // Bullets
     for (let i = bullets.length - 1; i >= 0; i--) {
-        bullets[i].update();
+        bullets[i].update(dt);
         if (bullets[i].dead) bullets.splice(i, 1);
     }
 
     checkCollisions();
+    GameCore.updateParticles(particles, dt);
 
     // FIX: Saubere Filter-Routine für tote Asteroiden
     asteroids = asteroids.filter(a => !a.dead);
@@ -488,41 +511,44 @@ function draw() {
     stars.forEach(star => star.draw());
     asteroids.forEach(asteroid => asteroid.draw());
     bullets.forEach(bullet => bullet.draw());
-    ship.draw();
+    GameCore.drawParticles(ctx, particles);
+    if (ship) ship.draw();
 }
 
-function gameLoop() {
-    if (gameRunning) {
-        update();
-        draw();
-        requestAnimationFrame(gameLoop);
-    }
-}
+let loopController = null;
 
 function startGame() {
     score = 0;
     lives = 3;
     scoreEl.innerText = score;
     livesEl.innerText = lives;
-    
+
     ship = new Ship();
     bullets = [];
+    particles = [];
     createAsteroids();
-    
+
     stars = [];
     for(let i=0; i<100; i++) stars.push(new Star());
 
     gameRunning = true;
     startScreen.classList.add('hidden');
     gameOverScreen.classList.add('hidden');
-    gameLoop();
+    bgLoopController.stop();
+    if (loopController) loopController.stop();
+    loopController = GameCore.startLoop((dt) => {
+        if (!gameRunning) return;
+        update(dt);
+        draw();
+    });
 }
 
 function gameOver() {
     gameRunning = false;
+    if (loopController) loopController.stop();
+    bgLoopController.resume();
     if (score > highscore) {
-        highscore = score;
-        localStorage.setItem('asteroids_highscore', highscore);
+        highscore = GameCore.saveHighscore('asteroids_highscore', score);
         highscoreEl.innerText = highscore;
     }
     finalScoreEl.innerText = score;
@@ -549,18 +575,14 @@ restartBtn.addEventListener('click', startGame);
 stars = [];
 for(let i=0; i<100; i++) stars.push(new Star());
 
-function drawBackgroundOnly() {
-    if (!gameRunning) {
-        ctx.fillStyle = CONFIG.BG_COLOR;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        stars.forEach(star => {
-            star.update();
-            star.draw();
-        });
-        requestAnimationFrame(drawBackgroundOnly);
-    }
-}
-drawBackgroundOnly();
+const bgLoopController = GameCore.startLoop((dt) => {
+    ctx.fillStyle = CONFIG.BG_COLOR;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    stars.forEach(star => {
+        star.update(dt);
+        star.draw();
+    });
+});
 
 </script>
 </body>

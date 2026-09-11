@@ -6,10 +6,10 @@
     <title>Neon Tetris</title>
     <style>
         :root {
-            --bg-color: #121212;
-            --panel-color: #1e1e1e;
-            --text-color: #ffffff;
-            --accent-color: #00ffcc;
+            --bg-color: var(--t-bg2, #121212);
+            --panel-color: var(--t-bg2, #1e1e1e);
+            --text-color: var(--t-text, #ffffff);
+            --accent-color: var(--t-primary, #00ffcc);
             --grid-line: #2a2a2a;
         }
 
@@ -40,7 +40,7 @@
         .canvas-wrapper {
             position: relative;
             border: 2px solid #333;
-            background-color: #000;
+            background-color: var(--t-bg, #000);
         }
 
         canvas#gameCanvas {
@@ -241,6 +241,8 @@
         </div>
     </div>
 
+    <script src="shared/game-core.js"></script>
+    <script src="shared/theme.js"></script>
     <script>
         // ============================================
         // KONFIGURATION UND KONSTANTEN
@@ -258,64 +260,59 @@
                     [1, 1, 1, 1],
                     [0, 0, 0, 0],
                     [0, 0, 0, 0]
-                ],
-                color: '#00ffff',
-                glow: '#00ffff'
+                ]
             },
             'O': {
                 shape: [
                     [1, 1],
                     [1, 1]
-                ],
-                color: '#ffff00',
-                glow: '#ffff00'
+                ]
             },
             'T': {
                 shape: [
                     [0, 1, 0],
                     [1, 1, 1],
                     [0, 0, 0]
-                ],
-                color: '#ff00ff',
-                glow: '#ff00ff'
+                ]
             },
             'S': {
                 shape: [
                     [0, 1, 1],
                     [1, 1, 0],
                     [0, 0, 0]
-                ],
-                color: '#00ff00',
-                glow: '#00ff00'
+                ]
             },
             'Z': {
                 shape: [
                     [1, 1, 0],
                     [0, 1, 1],
                     [0, 0, 0]
-                ],
-                color: '#ff0000',
-                glow: '#ff0000'
+                ]
             },
             'J': {
                 shape: [
                     [1, 0, 0],
                     [1, 1, 1],
                     [0, 0, 0]
-                ],
-                color: '#0000ff',
-                glow: '#0000ff'
+                ]
             },
             'L': {
                 shape: [
                     [0, 0, 1],
                     [1, 1, 1],
                     [0, 0, 0]
-                ],
-                color: '#ff8800',
-                glow: '#ff8800'
+                ]
             }
         };
+
+        function applyTetrominoTheme(palette) {
+            Object.keys(TETROMINOS).forEach((type, i) => {
+                const color = palette.pieces[i % palette.pieces.length];
+                TETROMINOS[type].color = color;
+                TETROMINOS[type].glow = color;
+            });
+        }
+        applyTetrominoTheme(Theme.current());
 
         // ============================================
         // AUDIO SYSTEM (Web Audio API)
@@ -412,12 +409,19 @@
                 this.dropCounter = 0;
                 this.dropInterval = 1000;
                 this.lastTime = 0;
-                
+
                 this.animationId = null;
-                
+                this.particles = [];
+
                 this.initInput();
                 this.initUI();
                 this.loadHighscore();
+
+                Theme.onThemeChange((palette) => {
+                    applyTetrominoTheme(palette);
+                    if (!this.gameStarted || this.paused) this.draw();
+                    this.drawNextPiece();
+                });
             }
 
             createBoard() {
@@ -551,6 +555,12 @@
                 
                 for (let y = ROWS - 1; y >= 0; y--) {
                     if (this.board[y].every(cell => cell !== 0)) {
+                        GameCore.spawnParticles(
+                            this.particles,
+                            COLS * BLOCK_SIZE / 2, y * BLOCK_SIZE + BLOCK_SIZE / 2,
+                            Theme.current().accent, 16,
+                            { speed: 220, life: 0.6 }
+                        );
                         this.board.splice(y, 1);
                         this.board.unshift(Array(COLS).fill(0));
                         linesCleared++;
@@ -574,17 +584,14 @@
             }
 
             loadHighscore() {
-                const highscore = localStorage.getItem('tetris_highscore') || 0;
+                const highscore = GameCore.loadHighscore('tetris_highscore');
                 document.getElementById('highscore').textContent = highscore;
                 return highscore;
             }
 
             saveHighscore() {
-                const currentHighscore = parseInt(localStorage.getItem('tetris_highscore') || 0);
-                if (this.score > currentHighscore) {
-                    localStorage.setItem('tetris_highscore', this.score);
-                    document.getElementById('highscore').textContent = this.score;
-                }
+                const newHighscore = GameCore.saveHighscore('tetris_highscore', this.score);
+                document.getElementById('highscore').textContent = newHighscore;
             }
 
             drawBlock(ctx, x, y, color, glow = false) {
@@ -617,7 +624,7 @@
 
             draw() {
                 // Clear canvas
-                this.ctx.fillStyle = '#000';
+                this.ctx.fillStyle = Theme.current().bg;
                 this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
                 
                 // Draw grid
@@ -678,10 +685,12 @@
                         }
                     }
                 }
+
+                GameCore.drawParticles(this.ctx, this.particles);
             }
 
             drawNextPiece() {
-                this.nextCtx.fillStyle = '#252525';
+                this.nextCtx.fillStyle = Theme.current().bg2;
                 this.nextCtx.fillRect(0, 0, this.nextCanvas.width, this.nextCanvas.height);
                 
                 if (!this.nextPieceType) return;
@@ -715,7 +724,8 @@
                     }
                     this.dropCounter = 0;
                 }
-                
+
+                GameCore.updateParticles(this.particles, deltaTime / 1000);
                 this.draw();
                 this.animationId = requestAnimationFrame(this.update.bind(this));
             }

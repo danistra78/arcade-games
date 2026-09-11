@@ -5,7 +5,7 @@ Eine Sammlung klassischer Arcade-Spielklone, die vollständig von Large Language
 ## 🎮 Direkt im Browser spielen
 
 Alle funktionierenden Spiele sind live geschaltet und können direkt ohne Installation gespielt werden:
-👉 **[Hier spielen: [danistra78.github.io/arcade-games]([https://play.hanwavel.ch/](https://danistra78.github.io/arcade-games/))**
+👉 **[Hier spielen: danistra78.github.io/arcade-games](https://danistra78.github.io/arcade-games/)**
 
 ## 🛠️ Lokale Ausführung
 
