@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WIZBALL</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--t-bg, #050505);
+            color: var(--t-text, #fff);
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+            border: 2px solid var(--t-border, #333);
+        }
+
+        canvas {
+            display: block;
+            background-color: var(--t-bg, #000);
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            pointer-events: none;
+            padding: 12px 20px;
+            box-sizing: border-box;
+            display: flex;
+            justify-content: space-between;
+            font-size: 16px;
+            font-weight: bold;
+            text-shadow: 0 0 5px var(--t-primary, #0ff);
+            color: var(--t-primary, #0ff);
+            z-index: 5;
+        }
+
+        #start-screen, #game-over-screen, #level-clear-screen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 40px;
+            border: 2px solid var(--t-primary, #0ff);
+            box-shadow: 0 0 15px var(--t-primary, #0ff);
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            z-index: 20;
+        }
+
+        h1 {
+            color: var(--t-primary, #0ff);
+            text-shadow: 0 0 10px var(--t-primary, #0ff);
+            margin: 0;
+            font-size: 40px;
+            letter-spacing: 4px;
+        }
+
+        p {
+            font-size: 15px;
+            color: #ccc;
+            margin: 0;
+        }
+
+        button {
+            background: transparent;
+            color: var(--t-secondary, #f0f);
+            border: 2px solid var(--t-secondary, #f0f);
+            padding: 10px 30px;
+            font-size: 18px;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            box-shadow: 0 0 5px var(--t-secondary, #f0f);
+        }
+
+        button:hover {
+            background: var(--t-secondary, #f0f);
+            color: #000;
+            box-shadow: 0 0 20px var(--t-secondary, #f0f);
+        }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div id="ui-layer">
+            <div>SCORE: <span id="scoreEl">0</span></div>
+            <div>LEVEL: <span id="levelEl">1</span></div>
+            <div>GEFÄRBT: <span id="colorEl">0</span>%</div>
+            <div>LEBEN: <span id="livesEl">3</span></div>
+            <div>HIGHSCORE: <span id="highscoreEl">0</span></div>
+        </div>
+        <div id="start-screen">
+            <h1>WIZBALL</h1>
+            <p>Steuerung: Pfeiltasten / WASD zum Fliegen</p>
+            <p>Leertaste: Farbe verspritzen</p>
+            <p>Färbe die Welt ein, weiche Gegnern aus und schiess sie ab!</p>
+            <button id="startBtn">SPIEL STARTEN</button>
+        </div>
+        <div id="game-over-screen" class="hidden">
+            <h1>GAME OVER</h1>
+            <p>Endscore: <span id="finalScore">0</span></p>
+            <button id="restartBtn">NEUSTART</button>
+        </div>
+        <div id="level-clear-screen" class="hidden">
+            <h1>LEVEL GESCHAFFT!</h1>
+            <p>Bonus: +<span id="clearBonus">0</span> Punkte</p>
+            <button id="nextLevelBtn">NÄCHSTES LEVEL</button>
+        </div>
+    </div>
+
+    <script src="shared/game-core.js"></script>
+    <script src="shared/theme.js"></script>
+    <script>
+        // ============================================
+        // KONFIGURATION
+        // ============================================
+        const CANVAS_WIDTH = 800;
+        const CANVAS_HEIGHT = 600;
+        const CELL = 25;
+        const GRID_COLS = CANVAS_WIDTH / CELL; // 32
+        const GRID_ROWS = CANVAS_HEIGHT / CELL; // 24
+
+        const CONFIG = {
+            gravity: 480,
+            thrust: 950,
+            hAccel: 750,
+            damping: 0.9, // Faktor @60fps, dt-korrekt via Math.pow skaliert
+            maxSpeed: 380,
+            floorBounce: 0.55,
+            wallBounce: 0.65,
+            playerRadius: 14,
+            shotSpeed: 420,
+            shotGravity: 260,
+            shotLife: 1.2,
+            splatRadius: 48,
+            bigSplatRadius: 80,
+            fireCooldown: 0.32,
+            rapidFireCooldown: 0.12,
+            invulnTime: 1.5,
+            levelClearPercent: 65,
+            powerUpLife: 12,
+            enemyRadius: 16
+        };
+
+        const COLORS = {
+            bg: '#000',
+            bgGrid: '#111',
+            gridLine: 'rgba(255,255,255,0.05)',
+            player: '#0ff',
+            enemyFloater: '#f0f',
+            enemyShooter: '#f44',
+            enemyBullet: '#f44',
+            playerShot: '#ff0',
+            powerupLife: '#0f0',
+            powerupRapid: '#ff0',
+            powerupSplat: '#f0f',
+            paintPalette: ['#00ffff', '#ffff00', '#ff00ff', '#00ff00', '#ff2255', '#3355ff', '#ff8800']
+        };
+
+        function applyTheme(palette) {
+            COLORS.bg = palette.bg;
+            COLORS.bgGrid = palette.bg2;
+            COLORS.player = palette.primary;
+            COLORS.enemyFloater = palette.secondary;
+            COLORS.enemyShooter = palette.warn;
+            COLORS.enemyBullet = palette.warn;
+            COLORS.playerShot = palette.accent;
+            COLORS.powerupLife = palette.good;
+            COLORS.powerupRapid = palette.accent;
+            COLORS.powerupSplat = palette.secondary;
+            COLORS.paintPalette = palette.pieces;
+        }
+        applyTheme(Theme.current());
+
+        // ============================================
+        // STATE
+        // ============================================
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('scoreEl');
+        const levelEl = document.getElementById('levelEl');
+        const colorEl = document.getElementById('colorEl');
+        const livesEl = document.getElementById('livesEl');
+        const highscoreEl = document.getElementById('highscoreEl');
+        const startScreen = document.getElementById('start-screen');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const levelClearScreen = document.getElementById('level-clear-screen');
+        const finalScoreEl = document.getElementById('finalScore');
+        const clearBonusEl = document.getElementById('clearBonus');
+
+        const state = {
+            running: false,
+            gameOver: false,
+            score: 0,
+            level: 1,
+            lives: 3,
+            highscore: GameCore.loadHighscore('wizball_highscore'),
+            keys: {},
+            coloredCount: 0,
+            totalCells: GRID_COLS * GRID_ROWS,
+            paintIndex: 0,
+            invulnTimer: 0,
+            fireCooldown: 0,
+            rapidFireTimer: 0,
+            bigSplatTimer: 0,
+            enemySpawnTimer: 1.5,
+            powerUpSpawnTimer: 6
+        };
+
+        let grid = [];
+        let player = null;
+        let blobs = [];
+        let enemies = [];
+        let enemyBullets = [];
+        let powerUps = [];
+        let particles = [];
+        let loopController = null;
+
+        function createGrid() {
+            grid = [];
+            for (let r = 0; r < GRID_ROWS; r++) {
+                grid.push(new Array(GRID_COLS).fill(null));
+            }
+            state.coloredCount = 0;
+        }
+
+        // ============================================
+        // KLASSEN
+        // ============================================
+        class Player {
+            constructor() {
+                this.x = CANVAS_WIDTH / 2;
+                this.y = CANVAS_HEIGHT / 2;
+                this.vx = 0;
+                this.vy = 0;
+                this.radius = CONFIG.playerRadius;
+                this.facing = 1;
+            }
+            update(dt) {
+                const left = state.keys['ArrowLeft'] || state.keys['a'];
+                const right = state.keys['ArrowRight'] || state.keys['d'];
+                const up = state.keys['ArrowUp'] || state.keys['w'];
+
+                if (left) { this.vx -= CONFIG.hAccel * dt; this.facing = -1; }
+                if (right) { this.vx += CONFIG.hAccel * dt; this.facing = 1; }
+                if (up) { this.vy -= CONFIG.thrust * dt; }
+
+                this.vy += CONFIG.gravity * dt;
+
+                const dampFactor = Math.pow(CONFIG.damping, dt * 60);
+                this.vx *= dampFactor;
+
+                this.vx = Math.max(-CONFIG.maxSpeed, Math.min(CONFIG.maxSpeed, this.vx));
+                this.vy = Math.max(-CONFIG.maxSpeed, Math.min(CONFIG.maxSpeed, this.vy));
+
+                this.x += this.vx * dt;
+                this.y += this.vy * dt;
+
+                if (this.x - this.radius < 0) { this.x = this.radius; this.vx = -this.vx * CONFIG.wallBounce; }
+                if (this.x + this.radius > CANVAS_WIDTH) { this.x = CANVAS_WIDTH - this.radius; this.vx = -this.vx * CONFIG.wallBounce; }
+                if (this.y - this.radius < 0) { this.y = this.radius; this.vy = -this.vy * CONFIG.wallBounce; }
+                if (this.y + this.radius > CANVAS_HEIGHT) {
+                    this.y = CANVAS_HEIGHT - this.radius;
+                    this.vy = -this.vy * CONFIG.floorBounce;
+                }
+
+                if (state.fireCooldown > 0) state.fireCooldown -= dt;
+                if (state.keys[' '] && state.fireCooldown <= 0) {
+                    shoot();
+                    state.fireCooldown = state.rapidFireTimer > 0 ? CONFIG.rapidFireCooldown : CONFIG.fireCooldown;
+                }
+            }
+            draw() {
+                if (state.invulnTimer > 0 && Math.floor(state.invulnTimer * 12) % 2 === 0) return;
+                ctx.save();
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = COLORS.player;
+                ctx.fillStyle = COLORS.player;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                // Kontur, damit der Ball auf gleichfarbig bemaltem Untergrund sichtbar bleibt
+                ctx.shadowBlur = 0;
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#fff';
+                ctx.stroke();
+                // Auge/Blickrichtung
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(this.x + this.facing * 6, this.y - 3, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        class Blob {
+            constructor(x, y, vx, vy, big) {
+                this.x = x; this.y = y; this.vx = vx; this.vy = vy;
+                this.life = CONFIG.shotLife;
+                this.radius = 4;
+                this.big = big;
+                this.dead = false;
+            }
+            update(dt) {
+                this.vy += CONFIG.shotGravity * dt;
+                this.x += this.vx * dt;
+                this.y += this.vy * dt;
+                this.life -= dt;
+                if (this.life <= 0 || this.y > CANVAS_HEIGHT || this.x < 0 || this.x > CANVAS_WIDTH) {
+                    this.splat();
+                }
+            }
+            splat() {
+                if (this.dead) return;
+                this.dead = true;
+                const r = this.big ? CONFIG.bigSplatRadius : CONFIG.splatRadius;
+                paintArea(this.x, this.y, r);
+                GameCore.spawnParticles(particles, this.x, this.y, COLORS.paintPalette[state.paintIndex], 10, { speed: 130, life: 0.4 });
+            }
+            draw() {
+                ctx.save();
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = COLORS.playerShot;
+                ctx.fillStyle = COLORS.paintPalette[state.paintIndex];
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        class Enemy {
+            constructor(type) {
+                this.type = type;
+                this.x = Math.random() * (CANVAS_WIDTH - 80) + 40;
+                this.y = -30;
+                this.baseY = 60 + Math.random() * 300;
+                this.phase = Math.random() * Math.PI * 2;
+                this.speed = (40 + Math.random() * 30) * (Math.random() > 0.5 ? 1 : -1);
+                this.radius = CONFIG.enemyRadius;
+                this.hp = type === 'shooter' ? 2 : 1;
+                this.shootTimer = 1 + Math.random() * 2;
+                this.entryDone = false;
+                this.alive = true;
+            }
+            update(dt) {
+                if (!this.entryDone) {
+                    this.y += 120 * dt;
+                    if (this.y >= this.baseY) { this.y = this.baseY; this.entryDone = true; }
+                    return;
+                }
+                this.phase += dt * 1.5;
+                this.x += this.speed * dt;
+                this.y = this.baseY + Math.sin(this.phase) * 40;
+                if (this.x < this.radius || this.x > CANVAS_WIDTH - this.radius) this.speed *= -1;
+
+                if (this.type === 'shooter') {
+                    this.shootTimer -= dt;
+                    if (this.shootTimer <= 0 && player) {
+                        this.shootTimer = 1.8 + Math.random() * 1.2;
+                        const dx = player.x - this.x, dy = player.y - this.y;
+                        const dist = Math.hypot(dx, dy) || 1;
+                        enemyBullets.push({
+                            x: this.x, y: this.y,
+                            vx: (dx / dist) * 220, vy: (dy / dist) * 220,
+                            radius: 5
+                        });
+                    }
+                }
+            }
+            draw() {
+                ctx.save();
+                const color = this.type === 'shooter' ? COLORS.enemyShooter : COLORS.enemyFloater;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = color;
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                if (this.type === 'shooter') {
+                    ctx.fillStyle = '#000';
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius * 0.4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.restore();
+            }
+        }
+
+        class PowerUp {
+            constructor(x, y, kind) {
+                this.x = x; this.y = y; this.kind = kind;
+                this.radius = 10;
+                this.life = CONFIG.powerUpLife;
+                this.phase = Math.random() * Math.PI * 2;
+                this.baseY = y;
+            }
+            update(dt) {
+                this.life -= dt;
+                this.phase += dt * 2;
+                this.y = this.baseY + Math.sin(this.phase) * 8;
+            }
+            color() {
+                if (this.kind === 'life') return COLORS.powerupLife;
+                if (this.kind === 'rapid') return COLORS.powerupRapid;
+                if (this.kind === 'splat') return COLORS.powerupSplat;
+                return COLORS.paintPalette[this.kind];
+            }
+            draw() {
+                ctx.save();
+                const c = this.color();
+                ctx.shadowBlur = 12;
+                ctx.shadowColor = c;
+                ctx.fillStyle = c;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        // ============================================
+        // SPIELLOGIK
+        // ============================================
+        function paintArea(cx, cy, radius) {
+            const minCol = Math.max(0, Math.floor((cx - radius) / CELL));
+            const maxCol = Math.min(GRID_COLS - 1, Math.floor((cx + radius) / CELL));
+            const minRow = Math.max(0, Math.floor((cy - radius) / CELL));
+            const maxRow = Math.min(GRID_ROWS - 1, Math.floor((cy + radius) / CELL));
+            for (let r = minRow; r <= maxRow; r++) {
+                for (let c = minCol; c <= maxCol; c++) {
+                    const centerX = c * CELL + CELL / 2;
+                    const centerY = r * CELL + CELL / 2;
+                    const dist = Math.hypot(centerX - cx, centerY - cy);
+                    if (dist <= radius) {
+                        if (grid[r][c] === null) state.coloredCount++;
+                        if (grid[r][c] !== state.paintIndex) {
+                            grid[r][c] = state.paintIndex;
+                            state.score += 2;
+                        }
+                    }
+                }
+            }
+        }
+
+        function shoot() {
+            const speed = CONFIG.shotSpeed;
+            const vx = player.facing * speed;
+            const vy = -180;
+            blobs.push(new Blob(player.x + player.facing * player.radius, player.y, vx, vy, state.bigSplatTimer > 0));
+        }
+
+        function spawnEnemy() {
+            const type = Math.random() < 0.5 ? 'floater' : 'shooter';
+            enemies.push(new Enemy(type));
+        }
+
+        function spawnPowerUp() {
+            const x = 60 + Math.random() * (CANVAS_WIDTH - 120);
+            const y = 60 + Math.random() * (CANVAS_HEIGHT - 200);
+            const roll = Math.random();
+            let kind;
+            if (roll < 0.15) kind = 'life';
+            else if (roll < 0.4) kind = 'rapid';
+            else if (roll < 0.65) kind = 'splat';
+            else kind = Math.floor(Math.random() * COLORS.paintPalette.length);
+            powerUps.push(new PowerUp(x, y, kind));
+        }
+
+        function applyPowerUp(p) {
+            if (p.kind === 'life') {
+                state.lives++;
+            } else if (p.kind === 'rapid') {
+                state.rapidFireTimer = 6;
+            } else if (p.kind === 'splat') {
+                state.bigSplatTimer = 6;
+            } else {
+                state.paintIndex = p.kind;
+            }
+            state.score += 25;
+            GameCore.spawnParticles(particles, p.x, p.y, p.color(), 14, { speed: 160, life: 0.5 });
+        }
+
+        function playerHit() {
+            if (state.invulnTimer > 0) return;
+            state.lives--;
+            state.invulnTimer = CONFIG.invulnTime;
+            GameCore.spawnParticles(particles, player.x, player.y, COLORS.player, 18, { speed: 180, life: 0.6 });
+            updateUI();
+            if (state.lives <= 0) triggerGameOver();
+        }
+
+        function checkCollisions() {
+            // Blobs vs. Gegner
+            for (const b of blobs) {
+                if (b.dead) continue;
+                for (const e of enemies) {
+                    if (!e.alive || !e.entryDone) continue;
+                    if (Math.hypot(b.x - e.x, b.y - e.y) < b.radius + e.radius) {
+                        e.hp--;
+                        b.splat();
+                        if (e.hp <= 0) {
+                            e.alive = false;
+                            state.score += e.type === 'shooter' ? 150 : 80;
+                            GameCore.spawnParticles(particles, e.x, e.y, e.type === 'shooter' ? COLORS.enemyShooter : COLORS.enemyFloater, 16, { speed: 180, life: 0.5 });
+                            if (Math.random() < 0.3) spawnPowerUp();
+                        }
+                        break;
+                    }
+                }
+            }
+            blobs = blobs.filter(b => !b.dead);
+            enemies = enemies.filter(e => e.alive);
+
+            // Gegner vs. Spieler
+            if (state.invulnTimer <= 0) {
+                for (const e of enemies) {
+                    if (e.entryDone && Math.hypot(player.x - e.x, player.y - e.y) < player.radius + e.radius) {
+                        playerHit();
+                        break;
+                    }
+                }
+            }
+
+            // Gegner-Schüsse vs. Spieler
+            for (let i = enemyBullets.length - 1; i >= 0; i--) {
+                const eb = enemyBullets[i];
+                if (state.invulnTimer <= 0 && Math.hypot(player.x - eb.x, player.y - eb.y) < player.radius + eb.radius) {
+                    enemyBullets.splice(i, 1);
+                    playerHit();
+                    continue;
+                }
+                if (eb.x < -20 || eb.x > CANVAS_WIDTH + 20 || eb.y < -20 || eb.y > CANVAS_HEIGHT + 20) {
+                    enemyBullets.splice(i, 1);
+                }
+            }
+
+            // PowerUps vs. Spieler
+            for (let i = powerUps.length - 1; i >= 0; i--) {
+                const p = powerUps[i];
+                if (Math.hypot(player.x - p.x, player.y - p.y) < player.radius + p.radius) {
+                    applyPowerUp(p);
+                    powerUps.splice(i, 1);
+                } else if (p.life <= 0) {
+                    powerUps.splice(i, 1);
+                }
+            }
+        }
+
+        function checkLevelClear() {
+            const pct = (state.coloredCount / state.totalCells) * 100;
+            if (pct >= CONFIG.levelClearPercent) {
+                levelClear();
+            }
+        }
+
+        function levelClear() {
+            state.running = false;
+            if (loopController) loopController.stop();
+            const bonus = 500 + state.lives * 100 + state.level * 50;
+            state.score += bonus;
+            clearBonusEl.innerText = bonus;
+            state.level++;
+            saveHighscore();
+            updateUI();
+            levelClearScreen.classList.remove('hidden');
+        }
+
+        function nextLevel() {
+            levelClearScreen.classList.add('hidden');
+            createGrid();
+            blobs = []; enemies = []; enemyBullets = []; powerUps = [];
+            state.enemySpawnTimer = 1.2;
+            state.powerUpSpawnTimer = 5;
+            state.invulnTimer = 1.0;
+            player.x = CANVAS_WIDTH / 2;
+            player.y = CANVAS_HEIGHT / 2;
+            player.vx = 0; player.vy = 0;
+            state.running = true;
+            updateUI();
+            loopController = GameCore.startLoop(gameLoop);
+        }
+
+        function triggerGameOver() {
+            state.running = false;
+            state.gameOver = true;
+            saveHighscore();
+            finalScoreEl.innerText = state.score;
+            updateUI();
+            gameOverScreen.classList.remove('hidden');
+        }
+
+        function saveHighscore() {
+            if (state.score > state.highscore) {
+                state.highscore = GameCore.saveHighscore('wizball_highscore', state.score);
+            }
+        }
+
+        function startGame() {
+            state.score = 0;
+            state.level = 1;
+            state.lives = 3;
+            state.gameOver = false;
+            state.paintIndex = 0;
+            state.invulnTimer = 1.0;
+            state.fireCooldown = 0;
+            state.rapidFireTimer = 0;
+            state.bigSplatTimer = 0;
+            state.enemySpawnTimer = 1.5;
+            state.powerUpSpawnTimer = 6;
+            createGrid();
+            player = new Player();
+            blobs = []; enemies = []; enemyBullets = []; powerUps = []; particles = [];
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            levelClearScreen.classList.add('hidden');
+            state.running = true;
+            updateUI();
+            if (loopController) loopController.stop();
+            loopController = GameCore.startLoop(gameLoop);
+        }
+
+        function updateUI() {
+            scoreEl.innerText = state.score;
+            levelEl.innerText = state.level;
+            livesEl.innerText = Math.max(0, state.lives);
+            highscoreEl.innerText = state.highscore;
+            colorEl.innerText = Math.floor((state.coloredCount / state.totalCells) * 100);
+        }
+
+        // ============================================
+        // GAME LOOP
+        // ============================================
+        function gameLoop(dt) {
+            if (!state.running) {
+                loopController.stop();
+                return;
+            }
+
+            player.update(dt);
+
+            if (state.invulnTimer > 0) state.invulnTimer -= dt;
+            if (state.rapidFireTimer > 0) state.rapidFireTimer -= dt;
+            if (state.bigSplatTimer > 0) state.bigSplatTimer -= dt;
+
+            for (const b of blobs) if (!b.dead) b.update(dt);
+            blobs = blobs.filter(b => !b.dead);
+
+            state.enemySpawnTimer -= dt;
+            if (state.enemySpawnTimer <= 0) {
+                spawnEnemy();
+                state.enemySpawnTimer = Math.max(0.8, 2.2 - state.level * 0.15) * (0.7 + Math.random() * 0.6);
+            }
+            enemies.forEach(e => e.update(dt));
+
+            enemyBullets.forEach(eb => { eb.x += eb.vx * dt; eb.y += eb.vy * dt; });
+
+            state.powerUpSpawnTimer -= dt;
+            if (state.powerUpSpawnTimer <= 0) {
+                spawnPowerUp();
+                state.powerUpSpawnTimer = 5 + Math.random() * 4;
+            }
+            powerUps.forEach(p => p.update(dt));
+
+            checkCollisions();
+            GameCore.updateParticles(particles, dt);
+
+            if (state.running) checkLevelClear();
+
+            updateUI();
+            draw();
+        }
+
+        // ============================================
+        // ZEICHNEN
+        // ============================================
+        function draw() {
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            for (let r = 0; r < GRID_ROWS; r++) {
+                for (let c = 0; c < GRID_COLS; c++) {
+                    const val = grid[r][c];
+                    ctx.fillStyle = val === null ? COLORS.bgGrid : COLORS.paintPalette[val];
+                    ctx.fillRect(c * CELL, r * CELL, CELL - 1, CELL - 1);
+                }
+            }
+
+            powerUps.forEach(p => p.draw());
+            enemyBullets.forEach(eb => {
+                ctx.save();
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = COLORS.enemyBullet;
+                ctx.fillStyle = COLORS.enemyBullet;
+                ctx.beginPath();
+                ctx.arc(eb.x, eb.y, eb.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            });
+            enemies.forEach(e => e.draw());
+            blobs.forEach(b => b.draw());
+            if (player) player.draw();
+            GameCore.drawParticles(ctx, particles);
+        }
+
+        function drawIdle() {
+            ctx.fillStyle = COLORS.bg;
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            for (let r = 0; r < GRID_ROWS; r++) {
+                for (let c = 0; c < GRID_COLS; c++) {
+                    ctx.fillStyle = COLORS.bgGrid;
+                    ctx.fillRect(c * CELL, r * CELL, CELL - 1, CELL - 1);
+                }
+            }
+        }
+
+        // ============================================
+        // EVENTS / INIT
+        // ============================================
+        window.addEventListener('keydown', e => {
+            state.keys[e.key] = true;
+            state.keys[e.key.toLowerCase()] = true;
+            if (e.key === ' ' || e.key.startsWith('Arrow')) e.preventDefault();
+        });
+        window.addEventListener('keyup', e => {
+            state.keys[e.key] = false;
+            state.keys[e.key.toLowerCase()] = false;
+        });
+
+        document.getElementById('startBtn').addEventListener('click', startGame);
+        document.getElementById('restartBtn').addEventListener('click', startGame);
+        document.getElementById('nextLevelBtn').addEventListener('click', nextLevel);
+
+        createGrid();
+        drawIdle();
+        highscoreEl.innerText = state.highscore;
+
+        Theme.onThemeChange((palette) => {
+            applyTheme(palette);
+            if (!state.running) drawIdle();
+        });
+    </script>
+</body>
+</html>
