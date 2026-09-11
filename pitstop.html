@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PITSTOP</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--t-bg, #050505);
+            color: var(--t-text, #fff);
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+            border: 2px solid var(--t-border, #333);
+        }
+
+        canvas {
+            display: block;
+            background-color: var(--t-bg, #000);
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            pointer-events: none;
+            padding: 8px 16px;
+            box-sizing: border-box;
+            z-index: 5;
+            text-shadow: 0 0 5px var(--t-primary, #0ff);
+        }
+
+        .hud-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            font-weight: bold;
+            color: var(--t-primary, #0ff);
+            padding: 2px 0;
+        }
+
+        #start-screen, #game-over-screen, #level-clear-screen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 40px;
+            border: 2px solid var(--t-primary, #0ff);
+            box-shadow: 0 0 15px var(--t-primary, #0ff);
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            z-index: 20;
+        }
+
+        h1 {
+            color: var(--t-primary, #0ff);
+            text-shadow: 0 0 10px var(--t-primary, #0ff);
+            margin: 0;
+            font-size: 36px;
+            letter-spacing: 4px;
+        }
+
+        p {
+            font-size: 14px;
+            color: #ccc;
+            margin: 0;
+        }
+
+        button {
+            background: transparent;
+            color: var(--t-secondary, #f0f);
+            border: 2px solid var(--t-secondary, #f0f);
+            padding: 10px 30px;
+            font-size: 18px;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            box-shadow: 0 0 5px var(--t-secondary, #f0f);
+        }
+
+        button:hover {
+            background: var(--t-secondary, #f0f);
+            color: #000;
+            box-shadow: 0 0 20px var(--t-secondary, #f0f);
+        }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div id="ui-layer">
+            <div class="hud-row">
+                <div>SCORE: <span id="scoreEl">0</span></div>
+                <div>RUNDE: <span id="lapEl">1</span>/<span id="totalLapsEl">4</span></div>
+                <div>ZEIT: <span id="timeEl">40</span>s</div>
+                <div>HIGHSCORE: <span id="highscoreEl">0</span></div>
+            </div>
+            <div class="hud-row">
+                <div>TEMPO: <span id="speedEl">0</span></div>
+                <div>SPRIT: <span id="fuelEl">100</span>%</div>
+                <div>REIFEN: <span id="tiresEl">100</span>%</div>
+                <div id="pitHint" class="hidden">RECHTS IN DIE BOXENGASSE!</div>
+            </div>
+        </div>
+        <div id="start-screen">
+            <h1>PITSTOP</h1>
+            <p>Steuerung: Pfeiltasten / WASD</p>
+            <p>Hoch: Gas | Runter: Bremse | Links/Rechts: Lenken</p>
+            <p>Sprit &amp; Reifen im Auge behalten – rechts abseits der Strecke liegt die Box!</p>
+            <button id="startBtn">RENNEN STARTEN</button>
+        </div>
+        <div id="game-over-screen" class="hidden">
+            <h1>ZEIT ABGELAUFEN</h1>
+            <p>Endscore: <span id="finalScore">0</span></p>
+            <button id="restartBtn">NEUSTART</button>
+        </div>
+        <div id="level-clear-screen" class="hidden">
+            <h1>RENNEN GESCHAFFT!</h1>
+            <p>Bonus: +<span id="clearBonus">0</span> Punkte</p>
+            <button id="nextLevelBtn">NÄCHSTES RENNEN</button>
+        </div>
+    </div>
+
+    <script src="shared/game-core.js"></script>
+    <script src="shared/theme.js"></script>
+    <script>
+        // ============================================
+        // KONFIGURATION
+        // ============================================
+        const CANVAS_WIDTH = 800;
+        const CANVAS_HEIGHT = 600;
+
+        const CONFIG = {
+            lookaheadMax: 900,
+            roadWidthNear: 340,
+            roadWidthFar: 110,
+            curveAmplitude: 170,
+            curveFreq: 0.0022,
+            lapDistance: 1400,
+            totalLaps: 4,
+            pitZoneStartFrac: 0.60,
+            pitZoneEndFrac: 0.98,
+            pitExtraWidth: 170,
+            lapTimeBase: 40,
+            carW: 26,
+            carH: 44,
+            playerRowT: 0.84,
+            maxSpeed: 760,
+            accel: 340,
+            brakeDecel: 560,
+            coastDecel: 140,
+            offroadDecelMult: 2.2,
+            steerSpeed: 420,
+            fuelDrainPerDist: 0.032,
+            tireDrainPerDist: 0.026,
+            tireDrainOffroadMult: 3,
+            pitStopDuration: 2.6,
+            pitLaunchDuration: 1.0,
+            collisionDistThreshold: 26,
+            oppRespawnBehind: -450
+        };
+        CONFIG.playerLookahead = (1 - CONFIG.playerRowT) * CONFIG.lookaheadMax;
+
+        const COLORS = {
+            grass: '#2d5c2d',
+            grassDark: '#254d25',
+            road: '#333333',
+            centerLine: '#ffe600',
+            curbRed: '#e63946',
+            curbWhite: '#f1f1f1',
+            player: '#0ff',
+            pit: '#ffe600',
+            pitText: '#fff',
+            opponents: ['#f0f', '#f44', '#0f0', '#ff0']
+        };
+
+        function applyTheme(palette) {
+            COLORS.road = palette.bg2;
+            COLORS.centerLine = palette.accent;
+            COLORS.player = palette.primary;
+            COLORS.pit = palette.accent;
+            COLORS.pitText = palette.text;
+            COLORS.opponents = [palette.secondary, palette.warn, palette.good, palette.accent];
+        }
+        applyTheme(Theme.current());
+
+        // ============================================
+        // STATE
+        // ============================================
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('scoreEl');
+        const lapEl = document.getElementById('lapEl');
+        const totalLapsEl = document.getElementById('totalLapsEl');
+        const timeEl = document.getElementById('timeEl');
+        const speedEl = document.getElementById('speedEl');
+        const fuelEl = document.getElementById('fuelEl');
+        const tiresEl = document.getElementById('tiresEl');
+        const highscoreEl = document.getElementById('highscoreEl');
+        const pitHint = document.getElementById('pitHint');
+        const startScreen = document.getElementById('start-screen');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const levelClearScreen = document.getElementById('level-clear-screen');
+        const finalScoreEl = document.getElementById('finalScore');
+        const clearBonusEl = document.getElementById('clearBonus');
+
+        const state = {
+            running: false,
+            score: 0,
+            raceNum: 1,
+            lap: 1,
+            dist: 0,
+            lapTimer: CONFIG.lapTimeBase,
+            fuel: 100,
+            tires: 100,
+            highscore: GameCore.loadHighscore('pitstop_highscore'),
+            keys: {},
+            pitPhase: 'none', // none | braking | servicing | launching
+            pitTimer: 0
+        };
+
+        let player = null;
+        let opponents = [];
+        let particles = [];
+        let loopController = null;
+
+        // ============================================
+        // STRECKE
+        // ============================================
+        function roadCenterX(worldDist) {
+            return CANVAS_WIDTH / 2 + Math.sin(worldDist * CONFIG.curveFreq) * CONFIG.curveAmplitude;
+        }
+
+        function roadWidthAtT(t) {
+            return CONFIG.roadWidthFar + (CONFIG.roadWidthNear - CONFIG.roadWidthFar) * t;
+        }
+
+        function worldAtPlayer() {
+            return state.dist + CONFIG.playerLookahead;
+        }
+
+        function lapFraction(worldDist) {
+            const lapPos = ((worldDist % CONFIG.lapDistance) + CONFIG.lapDistance) % CONFIG.lapDistance;
+            return lapPos / CONFIG.lapDistance;
+        }
+
+        function inPitZone(worldDist) {
+            const frac = lapFraction(worldDist);
+            return frac >= CONFIG.pitZoneStartFrac && frac <= CONFIG.pitZoneEndFrac;
+        }
+
+        // ============================================
+        // KLASSEN
+        // ============================================
+        class Player {
+            constructor() {
+                this.x = CANVAS_WIDTH / 2;
+                this.speed = 0;
+            }
+            update(dt) {
+                const roadHalf = roadWidthAtT(CONFIG.playerRowT) / 2;
+                const worldHere = worldAtPlayer();
+                const centerHere = roadCenterX(worldHere);
+                const relX = this.x - centerHere;
+                const pitZoneActive = inPitZone(worldHere);
+                const inPitLane = pitZoneActive && relX > roadHalf && relX <= roadHalf + CONFIG.pitExtraWidth;
+                const onRoad = Math.abs(relX) <= roadHalf || inPitLane;
+
+                if (state.pitPhase === 'none' && inPitLane && this.speed > 15) {
+                    state.pitPhase = 'braking';
+                }
+
+                if (state.pitPhase === 'braking') {
+                    this.speed = Math.max(0, this.speed - 520 * dt);
+                    const targetX = centerHere + roadHalf + CONFIG.pitExtraWidth / 2;
+                    this.x += (targetX - this.x) * Math.min(1, dt * 3);
+                    if (this.speed <= 2) {
+                        this.speed = 0;
+                        state.pitPhase = 'servicing';
+                        state.pitTimer = CONFIG.pitStopDuration;
+                    }
+                } else if (state.pitPhase === 'servicing') {
+                    state.pitTimer -= dt;
+                    state.fuel = Math.min(100, state.fuel + (100 / CONFIG.pitStopDuration) * dt);
+                    state.tires = Math.min(100, state.tires + (100 / CONFIG.pitStopDuration) * dt);
+                    if (Math.random() < dt * 8) {
+                        GameCore.spawnParticles(particles, this.x, CONFIG.playerRowT * CANVAS_HEIGHT, COLORS.pit, 3, { speed: 60, life: 0.5 });
+                    }
+                    if (state.pitTimer <= 0) {
+                        state.pitPhase = 'launching';
+                        state.pitTimer = CONFIG.pitLaunchDuration;
+                        GameCore.spawnParticles(particles, this.x, CONFIG.playerRowT * CANVAS_HEIGHT, COLORS.pit, 16, { speed: 150, life: 0.5 });
+                    }
+                } else if (state.pitPhase === 'launching') {
+                    state.pitTimer -= dt;
+                    this.speed = Math.min(320, this.speed + 400 * dt);
+                    this.x += (centerHere - this.x) * Math.min(1, dt * 1.5);
+                    if (state.pitTimer <= 0) {
+                        state.pitPhase = 'none';
+                    }
+                } else {
+                    // normale Steuerung
+                    const up = state.keys['ArrowUp'] || state.keys['w'];
+                    const down = state.keys['ArrowDown'] || state.keys['s'];
+                    const left = state.keys['ArrowLeft'] || state.keys['a'];
+                    const right = state.keys['ArrowRight'] || state.keys['d'];
+
+                    const tireMaxMult = 0.6 + 0.4 * (state.tires / 100);
+                    const fuelCap = state.fuel <= 0 ? 90 : Infinity;
+                    const effectiveMax = Math.min(CONFIG.maxSpeed * tireMaxMult, fuelCap);
+
+                    if (up) this.speed += CONFIG.accel * dt;
+                    else if (down) this.speed -= CONFIG.brakeDecel * dt;
+                    else this.speed -= CONFIG.coastDecel * dt;
+
+                    if (!onRoad) this.speed -= CONFIG.coastDecel * (CONFIG.offroadDecelMult - 1) * dt;
+
+                    this.speed = Math.max(0, Math.min(effectiveMax, this.speed));
+
+                    const steerMult = 0.5 + 0.5 * (state.tires / 100);
+                    if (left) this.x -= CONFIG.steerSpeed * steerMult * dt;
+                    if (right) this.x += CONFIG.steerSpeed * steerMult * dt;
+                    this.x = Math.max(30, Math.min(CANVAS_WIDTH - 30, this.x));
+                }
+
+                state.dist += this.speed * dt;
+
+                if (state.pitPhase === 'none') {
+                    state.fuel = Math.max(0, state.fuel - this.speed * dt * CONFIG.fuelDrainPerDist);
+                    const tireMult = onRoad ? 1 : CONFIG.tireDrainOffroadMult;
+                    state.tires = Math.max(0, state.tires - this.speed * dt * CONFIG.tireDrainPerDist * tireMult);
+
+                    if (!onRoad && Math.random() < dt * 10) {
+                        GameCore.spawnParticles(particles, this.x, CONFIG.playerRowT * CANVAS_HEIGHT + 15, '#aaa', 2, { speed: 40, life: 0.35, shape: 'circle' });
+                    }
+                }
+
+                pitHint.classList.toggle('hidden', !(pitZoneActive && state.pitPhase === 'none'));
+            }
+            draw() {
+                const y = CONFIG.playerRowT * CANVAS_HEIGHT;
+                ctx.save();
+                ctx.shadowBlur = 12;
+                ctx.shadowColor = COLORS.player;
+                ctx.fillStyle = COLORS.player;
+                ctx.fillRect(this.x - CONFIG.carW / 2, y - CONFIG.carH / 2, CONFIG.carW, CONFIG.carH);
+                ctx.shadowBlur = 0;
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#fff';
+                ctx.strokeRect(this.x - CONFIG.carW / 2, y - CONFIG.carH / 2, CONFIG.carW, CONFIG.carH);
+                ctx.fillStyle = 'rgba(0,0,0,0.4)';
+                ctx.fillRect(this.x - CONFIG.carW / 2 + 4, y - CONFIG.carH / 2 + 6, CONFIG.carW - 8, 10);
+                ctx.restore();
+            }
+        }
+
+        class Opponent {
+            constructor(distOffset) {
+                this.distOffset = distOffset;
+                this.lane = [-70, 0, 70][Math.floor(Math.random() * 3)];
+                this.color = COLORS.opponents[Math.floor(Math.random() * COLORS.opponents.length)];
+                this.baseSpeed = (300 + Math.random() * 160) * (1 + (state.raceNum - 1) * 0.08);
+                this.passed = false;
+            }
+            respawnAhead() {
+                this.distOffset = 550 + Math.random() * 550;
+                this.lane = [-70, 0, 70][Math.floor(Math.random() * 3)];
+                this.color = COLORS.opponents[Math.floor(Math.random() * COLORS.opponents.length)];
+                this.baseSpeed = (300 + Math.random() * 160) * (1 + (state.raceNum - 1) * 0.08);
+                this.passed = false;
+            }
+            update(dt) {
+                this.distOffset += (this.baseSpeed - player.speed) * dt;
+                if (this.distOffset < CONFIG.oppRespawnBehind) {
+                    this.respawnAhead();
+                    return;
+                }
+                if (!this.passed && this.distOffset < -20) {
+                    this.passed = true;
+                    state.score += 100;
+                }
+
+                if (Math.abs(this.distOffset) < CONFIG.collisionDistThreshold && state.pitPhase === 'none') {
+                    const worldY = state.dist + this.distOffset;
+                    const screenX = roadCenterX(worldY) + this.lane;
+                    if (Math.abs(player.x - screenX) < CONFIG.carW) {
+                        player.speed *= 0.55;
+                        state.tires = Math.max(0, state.tires - 8);
+                        this.distOffset += 70;
+                        GameCore.spawnParticles(particles, screenX, CONFIG.playerRowT * CANVAS_HEIGHT, '#fff', 14, { speed: 200, life: 0.4 });
+                    }
+                }
+            }
+            draw() {
+                const t = 1 - this.distOffset / CONFIG.lookaheadMax;
+                if (t < -0.05 || t > 1.05) return;
+                const worldY = state.dist + this.distOffset;
+                const cx = roadCenterX(worldY) + this.lane;
+                const cy = Math.max(0, Math.min(CANVAS_HEIGHT, t * CANVAS_HEIGHT));
+                const scale = Math.max(0.28, Math.min(1.1, 0.35 + t * 0.85));
+                const w = CONFIG.carW * scale, h = CONFIG.carH * scale;
+                ctx.save();
+                ctx.shadowBlur = 8 * scale;
+                ctx.shadowColor = this.color;
+                ctx.fillStyle = this.color;
+                ctx.fillRect(cx - w / 2, cy - h / 2, w, h);
+                ctx.restore();
+            }
+        }
+
+        // ============================================
+        // SPIELLOGIK
+        // ============================================
+        function checkLap() {
+            const lapNow = Math.floor(state.dist / CONFIG.lapDistance) + 1;
+            if (lapNow > state.lap) {
+                const timeBonus = Math.max(0, Math.floor(state.lapTimer * 10));
+                state.score += 300 + timeBonus;
+                state.lap = lapNow;
+                state.lapTimer = CONFIG.lapTimeBase;
+                if (state.lap > CONFIG.totalLaps) {
+                    raceFinished();
+                }
+            }
+        }
+
+        function raceFinished() {
+            state.running = false;
+            if (loopController) loopController.stop();
+            const bonus = 1000 + Math.floor(state.fuel) * 5 + Math.floor(state.tires) * 5;
+            state.score += bonus;
+            clearBonusEl.innerText = bonus;
+            saveHighscore();
+            updateUI();
+            levelClearScreen.classList.remove('hidden');
+        }
+
+        function nextRace() {
+            levelClearScreen.classList.add('hidden');
+            state.raceNum++;
+            state.lap = 1;
+            state.dist = 0;
+            state.lapTimer = Math.max(24, CONFIG.lapTimeBase - state.raceNum * 2);
+            state.fuel = 100;
+            state.tires = 100;
+            state.pitPhase = 'none';
+            player = new Player();
+            opponents = [];
+            for (let i = 0; i < 5; i++) opponents.push(new Opponent(300 + i * 260 + Math.random() * 120));
+            state.running = true;
+            updateUI();
+            loopController = GameCore.startLoop(gameLoop);
+        }
+
+        function triggerGameOver() {
+            state.running = false;
+            if (loopController) loopController.stop();
+            saveHighscore();
+            finalScoreEl.innerText = state.score;
+            updateUI();
+            gameOverScreen.classList.remove('hidden');
+        }
+
+        function saveHighscore() {
+            if (state.score > state.highscore) {
+                state.highscore = GameCore.saveHighscore('pitstop_highscore', state.score);
+            }
+        }
+
+        function startGame() {
+            state.score = 0;
+            state.raceNum = 1;
+            state.lap = 1;
+            state.dist = 0;
+            state.lapTimer = CONFIG.lapTimeBase;
+            state.fuel = 100;
+            state.tires = 100;
+            state.pitPhase = 'none';
+            player = new Player();
+            opponents = [];
+            for (let i = 0; i < 5; i++) opponents.push(new Opponent(300 + i * 260 + Math.random() * 120));
+            particles = [];
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            levelClearScreen.classList.add('hidden');
+            state.running = true;
+            totalLapsEl.innerText = CONFIG.totalLaps;
+            updateUI();
+            if (loopController) loopController.stop();
+            loopController = GameCore.startLoop(gameLoop);
+        }
+
+        function updateUI() {
+            scoreEl.innerText = Math.floor(state.score);
+            lapEl.innerText = Math.min(state.lap, CONFIG.totalLaps);
+            timeEl.innerText = Math.max(0, Math.ceil(state.lapTimer));
+            speedEl.innerText = player ? Math.round(player.speed) : 0;
+            fuelEl.innerText = Math.round(state.fuel);
+            tiresEl.innerText = Math.round(state.tires);
+            highscoreEl.innerText = Math.floor(state.highscore);
+        }
+
+        // ============================================
+        // GAME LOOP
+        // ============================================
+        function gameLoop(dt) {
+            if (!state.running) {
+                loopController.stop();
+                return;
+            }
+
+            player.update(dt);
+            opponents.forEach(o => o.update(dt));
+            GameCore.updateParticles(particles, dt);
+
+            state.score += player.speed * dt * 0.04;
+
+            if (state.pitPhase === 'none') {
+                state.lapTimer -= dt;
+                if (state.lapTimer <= 0) {
+                    triggerGameOver();
+                    return;
+                }
+            }
+
+            checkLap();
+            updateUI();
+            draw();
+        }
+
+        // ============================================
+        // ZEICHNEN
+        // ============================================
+        function drawTrack() {
+            const ROW = 6;
+            for (let y = 0; y < CANVAS_HEIGHT; y += ROW) {
+                const t = y / CANVAS_HEIGHT;
+                const lookAhead = (1 - t) * CONFIG.lookaheadMax;
+                const worldY = state.dist + lookAhead;
+                const cx = roadCenterX(worldY);
+                const rw = roadWidthAtT(t);
+
+                ctx.fillStyle = Math.floor(worldY / 90) % 2 === 0 ? COLORS.grass : COLORS.grassDark;
+                ctx.fillRect(0, y, CANVAS_WIDTH, ROW);
+
+                ctx.fillStyle = COLORS.road;
+                ctx.fillRect(cx - rw / 2, y, rw, ROW);
+
+                const curbW = Math.max(4, rw * 0.035);
+                const stripeOn = Math.floor(worldY / 40) % 2 === 0;
+                ctx.fillStyle = stripeOn ? COLORS.curbRed : COLORS.curbWhite;
+                ctx.fillRect(cx - rw / 2, y, curbW, ROW);
+                ctx.fillRect(cx + rw / 2 - curbW, y, curbW, ROW);
+
+                if (Math.floor(worldY / 50) % 2 === 0) {
+                    ctx.fillStyle = COLORS.centerLine;
+                    ctx.fillRect(cx - 2, y, 4, ROW);
+                }
+
+                if (inPitZone(worldY)) {
+                    ctx.fillStyle = COLORS.pit;
+                    ctx.globalAlpha = 0.85;
+                    ctx.fillRect(cx + rw / 2, y, CONFIG.pitExtraWidth * t, ROW);
+                    ctx.globalAlpha = 1;
+                }
+            }
+
+            // "PIT" Beschriftung, wenn die Box bald sichtbar wird
+            const pitFrac = lapFraction(worldAtPlayer());
+            if (pitFrac > CONFIG.pitZoneStartFrac - 0.1 && pitFrac < CONFIG.pitZoneEndFrac) {
+                ctx.save();
+                ctx.fillStyle = COLORS.pitText;
+                ctx.font = 'bold 22px Courier New';
+                ctx.textAlign = 'center';
+                ctx.fillText('PIT', CANVAS_WIDTH - 70, 90);
+                ctx.restore();
+            }
+        }
+
+        function draw() {
+            drawTrack();
+            opponents.slice().sort((a, b) => b.distOffset - a.distOffset).forEach(o => o.draw());
+            GameCore.drawParticles(ctx, particles);
+            if (player) player.draw();
+        }
+
+        function drawIdle() {
+            ctx.fillStyle = COLORS.grass;
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            const cx = CANVAS_WIDTH / 2;
+            ctx.fillStyle = COLORS.road;
+            ctx.fillRect(cx - 150, 0, 300, CANVAS_HEIGHT);
+        }
+
+        // ============================================
+        // EVENTS / INIT
+        // ============================================
+        window.addEventListener('keydown', e => {
+            state.keys[e.key] = true;
+            state.keys[e.key.toLowerCase()] = true;
+            if (e.key.startsWith('Arrow')) e.preventDefault();
+        });
+        window.addEventListener('keyup', e => {
+            state.keys[e.key] = false;
+            state.keys[e.key.toLowerCase()] = false;
+        });
+
+        document.getElementById('startBtn').addEventListener('click', startGame);
+        document.getElementById('restartBtn').addEventListener('click', startGame);
+        document.getElementById('nextLevelBtn').addEventListener('click', nextRace);
+
+        drawIdle();
+        totalLapsEl.innerText = CONFIG.totalLaps;
+        highscoreEl.innerText = state.highscore;
+
+        Theme.onThemeChange((palette) => {
+            applyTheme(palette);
+            if (!state.running) drawIdle();
+        });
+    </script>
+</body>
+</html>
