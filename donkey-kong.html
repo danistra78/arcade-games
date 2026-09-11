@@ -389,7 +389,7 @@
 
                     // Leiter hinunter? (nur direkt nach dem Landen, nicht sofort wieder)
                     for (const l of LADDERS) {
-                        if (Math.abs(l.topY - b.y) < 3 && Math.abs(l.x - b.x) < 4 &&
+                        if (Math.abs(l.topY - (b.y + b.radius)) < 3 && Math.abs(l.x - b.x) < 4 &&
                             Math.random() < CONFIG.barrelLadderChance * dt * 4) {
                             b.mode = 'ladder';
                             b.ladder = l;
@@ -412,9 +412,9 @@
                     b.y += speed * 1.2 * dt;
                     b.rotation += dt * 6;
                     if (b.y >= b.ladder.botY) {
-                        b.y = b.ladder.botY;
+                        b.y = b.ladder.botY - b.radius;
                         b.mode = 'roll';
-                        b.platformIdx = PLATFORMS.findIndex(pl => Math.abs(pl.y - b.y) < 3);
+                        b.platformIdx = PLATFORMS.findIndex(pl => Math.abs(pl.y - b.ladder.botY) < 3);
                         b.dir = b.platformIdx >= 0 ? BARREL_DIR[b.platformIdx] : -1;
                     }
                 }
@@ -599,6 +599,10 @@
             if (state.bonus <= 0) {
                 state.bonus = CONFIG.bonusStart;
                 playerHit();
+            }
+            if (state.gameOver) {
+                draw();
+                return;
             }
 
             // Fässer spawnen
