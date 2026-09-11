@@ -6,12 +6,12 @@
     <title>NEON BREAKOUT</title>
     <style>
         :root {
-            --bg-color: #050505;
-            --neon-blue: #00f3ff;
-            --neon-pink: #ff00ff;
-            --neon-green: #00ff41;
-            --neon-yellow: #ffe600;
-            --text-color: #ffffff;
+            --bg-color: var(--t-bg, #050505);
+            --neon-blue: var(--t-primary, #00f3ff);
+            --neon-pink: var(--t-secondary, #ff00ff);
+            --neon-green: var(--t-good, #00ff41);
+            --neon-yellow: var(--t-accent, #ffe600);
+            --text-color: var(--t-text, #ffffff);
         }
 
         body {
@@ -150,6 +150,8 @@
     </div>
 </div>
 
+<script src="shared/game-core.js"></script>
+<script src="shared/theme.js"></script>
 <script>
 /**
  * NEON BREAKOUT - Single File Implementation
@@ -162,10 +164,10 @@ const CONFIG = {
     canvasHeight: 600,
     paddleWidth: 100,
     paddleHeight: 15,
-    paddleSpeed: 8,
+    paddleSpeed: 480, // px/s
     ballRadius: 8,
-    ballSpeedBase: 5,
-    ballSpeedMax: 12,
+    ballSpeedBase: 300, // px/s
+    ballSpeedMax: 720, // px/s
     brickRows: 5,
     brickCols: 9,
     brickPadding: 10,
@@ -179,8 +181,18 @@ const CONFIG = {
         ball: '#ffffff'
     },
     powerUpChance: 0.15, // 15% Chance pro Stein
-    powerUpDuration: 10000 // ms
+    powerUpDuration: 10 // Sekunden
 };
+
+function applyTheme(palette) {
+    CONFIG.colors.normal = palette.primary;
+    CONFIG.colors.hard = palette.secondary;
+    CONFIG.colors.gold = palette.accent;
+    CONFIG.colors.paddle = palette.good;
+    CONFIG.colors.ball = palette.text;
+    CONFIG.colors.bg = palette.bg;
+}
+applyTheme(Theme.current());
 
 // --- Level Designs ---
 // 0: Leer, 1: Normal, 2: Hart, 3: Gold
@@ -210,35 +222,6 @@ const LEVELS = [
 
 // --- Klassen ---
 
-class Particle {
-    constructor(x, y, color) {
-        this.x = x;
-        this.y = y;
-        this.color = color;
-        const angle = Math.random() * Math.PI * 2;
-        const speed = Math.random() * 3 + 1;
-        this.vx = Math.cos(angle) * speed;
-        this.vy = Math.sin(angle) * speed;
-        this.life = 1.0;
-        this.decay = Math.random() * 0.03 + 0.02;
-    }
-
-    update() {
-        this.x += this.vx;
-        this.y += this.vy;
-        this.life -= this.decay;
-    }
-
-    draw(ctx) {
-        ctx.globalAlpha = this.life;
-        ctx.fillStyle = this.color;
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = 1.0;
-    }
-}
-
 class PowerUp {
     constructor(x, y, type) {
         this.x = x;
@@ -246,17 +229,17 @@ class PowerUp {
         this.width = 20;
         this.height = 20;
         this.type = type; // 'extraBall', 'bigPaddle', 'laser'
-        this.vy = 2;
+        this.vy = 120; // px/s
         this.active = true;
         this.color = '#ffffff';
-        
-        if (type === 'extraBall') this.color = '#00f3ff';
-        if (type === 'bigPaddle') this.color = '#00ff41';
-        if (type === 'laser') this.color = '#ff00ff';
+
+        if (type === 'extraBall') this.color = CONFIG.colors.normal;
+        if (type === 'bigPaddle') this.color = CONFIG.colors.paddle;
+        if (type === 'laser') this.color = CONFIG.colors.hard;
     }
 
-    update() {
-        this.y += this.vy;
+    update(dt) {
+        this.y += this.vy * dt;
     }
 
     draw(ctx) {
@@ -285,20 +268,20 @@ class Laser {
         this.y = y;
         this.width = 4;
         this.height = 15;
-        this.vy = -10;
+        this.vy = -600; // px/s
         this.active = true;
     }
 
-    update() {
-        this.y += this.vy;
+    update(dt) {
+        this.y += this.vy * dt;
         if (this.y < 0) this.active = false;
     }
 
     draw(ctx) {
         if (!this.active) return;
         ctx.shadowBlur = 10;
-        ctx.shadowColor = '#ff00ff';
-        ctx.fillStyle = '#ff00ff';
+        ctx.shadowColor = CONFIG.colors.hard;
+        ctx.fillStyle = CONFIG.colors.hard;
         ctx.fillRect(this.x, this.y, this.width, this.height);
     }
 }
@@ -321,7 +304,7 @@ class Game {
         this.score = 0;
         this.lives = 3;
         this.levelIndex = 0;
-        this.highscore = parseInt(localStorage.getItem('neonBreakoutHighscore')) || 0;
+        this.highscore = GameCore.loadHighscore('neonBreakoutHighscore');
         this.isRunning = false;
         this.animationId = null;
         
@@ -346,6 +329,11 @@ class Game {
         this.initInput();
         this.updateHighscoreUI();
         this.startBtn.addEventListener('click', () => this.startGame());
+
+        Theme.onThemeChange((palette) => {
+            applyTheme(palette);
+            if (!this.isRunning) this.draw();
+        });
     }
 
     initInput() {
@@ -431,26 +419,26 @@ class Game {
         this.lasers.push(new Laser(this.paddle.x + this.paddle.width / 2 - 2, this.paddle.y));
     }
 
-    update() {
+    update(dt) {
         if (!this.isRunning) return;
 
         // Paddle Movement
         if (this.useMouse) {
             this.paddle.x = this.mouseX - this.paddle.width / 2;
         } else {
-            if (this.keys['ArrowRight']) this.paddle.x += CONFIG.paddleSpeed;
-            if (this.keys['ArrowLeft']) this.paddle.x -= CONFIG.paddleSpeed;
+            if (this.keys['ArrowRight']) this.paddle.x += CONFIG.paddleSpeed * dt;
+            if (this.keys['ArrowLeft']) this.paddle.x -= CONFIG.paddleSpeed * dt;
         }
         // Clamp Paddle
         this.paddle.x = Math.max(0, Math.min(CONFIG.canvasWidth - this.paddle.width, this.paddle.x));
 
         // PowerUp Timers
         if (this.laserActive) {
-            this.laserTimer--;
+            this.laserTimer -= dt;
             if (this.laserTimer <= 0) this.laserActive = false;
         }
         if (this.bigPaddleTimer > 0) {
-            this.bigPaddleTimer--;
+            this.bigPaddleTimer -= dt;
             if (this.bigPaddleTimer <= 0) {
                 this.paddle.isBig = false;
                 this.paddle.width = CONFIG.paddleWidth;
@@ -460,19 +448,19 @@ class Game {
         // Update Balls
         for (let i = this.balls.length - 1; i >= 0; i--) {
             let b = this.balls[i];
-            b.x += b.dx;
-            b.y += b.dy;
+            b.x += b.dx * dt;
+            b.y += b.dy * dt;
 
             // Wall Collisions
-            if (b.x + b.dx > CONFIG.canvasWidth - CONFIG.ballRadius || b.x + b.dx < CONFIG.ballRadius) {
+            if (b.x + b.dx * dt > CONFIG.canvasWidth - CONFIG.ballRadius || b.x + b.dx * dt < CONFIG.ballRadius) {
                 b.dx = -b.dx;
             }
-            if (b.y + b.dy < CONFIG.ballRadius) {
+            if (b.y + b.dy * dt < CONFIG.ballRadius) {
                 b.dy = -b.dy;
             }
-            
+
             // Floor Collision (Loss)
-            if (b.y + b.dy > CONFIG.canvasHeight - CONFIG.ballRadius) {
+            if (b.y + b.dy * dt > CONFIG.canvasHeight - CONFIG.ballRadius) {
                 this.balls.splice(i, 1);
                 if (this.balls.length === 0) {
                     this.lives--;
@@ -527,7 +515,7 @@ class Game {
         // Update Lasers
         for (let i = this.lasers.length - 1; i >= 0; i--) {
             let l = this.lasers[i];
-            l.update();
+            l.update(dt);
             if (!l.active) {
                 this.lasers.splice(i, 1);
                 continue;
@@ -547,8 +535,8 @@ class Game {
         // Update PowerUps
         for (let i = this.powerUps.length - 1; i >= 0; i--) {
             let p = this.powerUps[i];
-            p.update();
-            
+            p.update(dt);
+
             // Collision with Paddle
             if (p.y + p.height >= this.paddle.y && 
                 p.y <= this.paddle.y + this.paddle.height &&
@@ -566,12 +554,7 @@ class Game {
         }
 
         // Update Particles
-        for (let i = this.particles.length - 1; i >= 0; i--) {
-            this.particles[i].update();
-            if (this.particles[i].life <= 0) {
-                this.particles.splice(i, 1);
-            }
-        }
+        GameCore.updateParticles(this.particles, dt);
 
         // Check Level Clear (Gold-Steine sind unzerstörbar und zählen nicht)
         if (this.bricks.filter(b => b.type !== 3).every(b => !b.active)) {
@@ -583,9 +566,7 @@ class Game {
 
     handleBrickHit(brick, x, y) {
         // Create Particles
-        for (let k = 0; k < 8; k++) {
-            this.particles.push(new Particle(x, y, this.getBrickColor(brick.type)));
-        }
+        GameCore.spawnParticles(this.particles, x, y, this.getBrickColor(brick.type), 8, { shape: 'circle', size: 3, speed: 150, life: 0.8 });
 
         if (brick.type === 3) {
             // Gold: Unbreakable, just bounce (handled by physics), no score
@@ -616,10 +597,10 @@ class Game {
         } else if (type === 'bigPaddle') {
             this.paddle.isBig = true;
             this.paddle.width = CONFIG.paddleWidth * 1.5;
-            this.bigPaddleTimer = CONFIG.powerUpDuration / 16; // frames
+            this.bigPaddleTimer = CONFIG.powerUpDuration; // Sekunden
         } else if (type === 'laser') {
             this.laserActive = true;
-            this.laserTimer = CONFIG.powerUpDuration / 16;
+            this.laserTimer = CONFIG.powerUpDuration;
         }
     }
 
@@ -632,7 +613,7 @@ class Game {
 
     draw() {
         // Clear
-        this.ctx.fillStyle = '#050505';
+        this.ctx.fillStyle = CONFIG.colors.bg;
         this.ctx.fillRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
 
         // Draw Background Grid (Animated)
@@ -678,11 +659,11 @@ class Game {
         this.lasers.forEach(l => l.draw(this.ctx));
 
         // Draw Particles
-        this.particles.forEach(p => p.draw(this.ctx));
+        GameCore.drawParticles(this.ctx, this.particles);
     }
 
     drawGrid() {
-        this.ctx.strokeStyle = 'rgba(0, 243, 255, 0.1)';
+        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
         this.ctx.lineWidth = 1;
         const time = Date.now() / 1000;
         const offset = (time * 20) % 50;
@@ -716,9 +697,9 @@ class Game {
 
     gameOver() {
         this.isRunning = false;
+        if (this.loopController) this.loopController.stop();
         if (this.score > this.highscore) {
-            this.highscore = this.score;
-            localStorage.setItem('neonBreakoutHighscore', this.highscore);
+            this.highscore = GameCore.saveHighscore('neonBreakoutHighscore', this.score);
             this.statusText.innerText = `NEUER HIGHSCORE! Punkte: ${this.score}`;
         } else {
             this.statusText.innerText = `Spiel Vorbei. Punkte: ${this.score}`;
@@ -729,10 +710,10 @@ class Game {
     }
 
     loop() {
-        if (!this.isRunning) return;
-        this.update();
-        this.draw();
-        this.animationId = requestAnimationFrame(() => this.loop());
+        this.loopController = GameCore.startLoop((dt) => {
+            this.update(dt);
+            this.draw();
+        });
     }
 }
 

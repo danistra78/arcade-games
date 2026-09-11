@@ -5,13 +5,13 @@
     <title>Hanwavel Arcade</title>
     <style>
         :root {
-            --neon-cyan: #0ff;
-            --neon-pink: #f0f;
-            --bg-dark: #050505;
+            --neon-cyan: var(--t-primary, #0ff);
+            --neon-pink: var(--t-secondary, #f0f);
+            --bg-dark: var(--t-bg, #050505);
         }
         body {
             background-color: var(--bg-dark);
-            color: #fff;
+            color: var(--t-text, #fff);
             font-family: 'Courier New', Courier, monospace;
             display: flex;
             flex-direction: column;
@@ -113,5 +113,5 @@
             
     </div>
 
-
+    <script src="shared/theme.js"></script>
 </body></html>
